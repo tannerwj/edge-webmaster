@@ -1,9 +1,10 @@
 import { deleteCredential, putCredential } from "./creds";
 import { googleAuthUrl, googleRedirectUri } from "./google";
 import { PACKS } from "./packs";
+import { getTheme, hasSetupSession, isTheme, resolveIdentity, sessionCookieValue, setTheme } from "./prefs";
 import { isActiveStatus, packStatus, packStatuses, type ConnectionStatus, type Env, type PackStatus } from "./registry";
 import { audit, createAgentToken, listAgentTokens, revokeAgentToken } from "./store";
-import { nowSec, OpError, randomToken, sha256Hex, str, timingSafeEqual } from "./util";
+import { nowSec, OpError, randomToken, str, timingSafeEqual } from "./util";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -12,17 +13,10 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
   });
 }
 
-async function sessionCookieValue(env: Env): Promise<string> {
-  return sha256Hex(`session:${env.SETUP_TOKEN ?? ""}`);
-}
-
 export async function isAdmin(req: Request, env: Env): Promise<boolean> {
   if (req.headers.get("cf-access-authenticated-user-email")) return true;
   if (!env.SETUP_TOKEN) return true; // first-run bootstrap: no Access and no token configured yet
-  const cookie = req.headers.get("cookie") ?? "";
-  const match = cookie.match(/(?:^|;\s*)ew_setup=([A-Za-z0-9+/=_-]+)/);
-  if (match && timingSafeEqual(match[1] ?? "", await sessionCookieValue(env))) return true;
-  return false;
+  return hasSetupSession(req, env);
 }
 
 async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
@@ -226,6 +220,9 @@ async function login(req: Request, env: Env): Promise<Response> {
 
 async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: string, url: URL): Promise<Response> {
   if ((path === "/api/status" || path === "/api/dashboard") && req.method === "GET") return json(await statusBody(env));
+  if (path === "/api/me" && req.method === "GET") return me(req, env);
+  if (path === "/api/preferences" && req.method === "PUT") return updatePreferences(req, env);
+  if (path === "/api/logout" && req.method === "POST") return logout();
   if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
   if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
   const connector = await routeConnectors(req, env, ctx, path);
@@ -233,6 +230,92 @@ async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: s
   const tokens = await routeTokens(req, env, ctx, path);
   if (tokens) return tokens;
   return json({ error: "Not found." }, 404);
+}
+
+async function me(req: Request, env: Env): Promise<Response> {
+  const identity = await resolveIdentity(req, env);
+  const theme = await getTheme(env, identity.key);
+  return json({ email: identity.email, identity: identity.identity, preferences: { theme } });
+}
+
+async function updatePreferences(req: Request, env: Env): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const theme = body.theme;
+  if (!isTheme(theme)) return json({ error: "theme must be one of: light, dark, system." }, 400);
+  const identity = await resolveIdentity(req, env);
+  await setTheme(env, identity.key, theme);
+  return json({ ok: true, preferences: { theme } });
+}
+
+function logout(): Response {
+  return json({ ok: true }, 200, {
+    "set-cookie": "ew_setup=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+  });
+}
+
+export async function handleSetupAgentDoc(req: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(req, env))) {
+    return new Response("Setup access required. Sign in through Cloudflare Access or enter the setup token.", {
+      status: 401,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const origin = (env.PUBLIC_URL ?? new URL(req.url).origin).replace(/\/$/, "");
+  return new Response(setupAgentDoc(origin), {
+    headers: { "content-type": "text/markdown; charset=utf-8" },
+  });
+}
+
+function setupAgentDoc(origin: string): string {
+  return `# Edge Webmaster — agent setup
+
+You are connecting to a self-hosted Edge Webmaster instance. Use this
+document to configure yourself as an MCP client of it.
+
+- Instance: ${origin}
+- MCP endpoint: ${origin}/mcp (streamable HTTP, POST JSON-RPC)
+
+## Authentication
+
+Send the agent token on every MCP request:
+
+    Authorization: Bearer <YOUR_TOKEN>
+
+Tokens are per-deployment \`ew_…\` values minted by the instance owner in
+the setup UI under "Agent tokens" (read = query only; write = also
+sitemap submit). If you do not have a token, ask the user to open
+${origin}, sign in, mint one, and paste it to you. Never invent a token,
+reuse one from another instance, or print a token back in full.
+
+## Client modes
+
+- **Code mode (default).** The catalog is two tools: \`search_tools\`
+  (keyword search over the live tool catalog) and \`execute\` (run
+  JavaScript against the typed \`gsc\` / \`ga4\` / \`bing\` / \`pagespeed\`
+  proxies, chaining calls and filtering in code; only the return value
+  comes back). Prefer this mode.
+- **Raw mode.** Every tool is listed directly in the MCP catalog; call
+  tools by name. Used when the deployment sets \`MCP_MODE=raw\`.
+
+## Example tasks
+
+- "Review search performance for the last 28 days and flag the biggest drops."
+- "List the top pages by clicks in Google Search Console."
+- "Check the sitemap status and report any sitemaps with errors."
+- "Summarize GA4 traffic by channel for the last 7 days."
+- "Show the top Bing queries for this site."
+- "Run a PageSpeed check on the home page and summarize Core Web Vitals."
+
+## Troubleshooting
+
+- **401 from /mcp** — token missing, revoked, or expired. Ask the user
+  for a fresh token.
+- **A namespace or tool is missing** — that connector is not connected
+  yet. Ask the user to finish setup at ${origin}.
+- **Upstream Google/Bing errors** — the connector's credentials may be
+  revoked or out of quota; report the error text to the user rather
+  than retrying in a loop.
+`;
 }
 
 async function oauthUrl(env: Env, url: URL): Promise<Response> {
@@ -331,5 +414,8 @@ export async function handleGoogleCallback(req: Request, env: Env): Promise<Resp
     return new Response(`Google sign-in failed: ${e instanceof OpError ? e.message : "unknown error"}`, { status: 400 });
   }
   await env.DB.prepare("DELETE FROM settings WHERE key = 'oauth_state'").run();
-  return new Response(null, { status: 302, headers: { location: "/?connected=google" } });
+  return new Response(null, {
+    status: 302,
+    headers: { location: "/connections/google-search-console?connected=google" },
+  });
 }

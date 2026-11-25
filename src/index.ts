@@ -1,4 +1,4 @@
-import { handleApi, handleGoogleCallback } from "./api";
+import { handleApi, handleGoogleCallback, handleSetupAgentDoc } from "./api";
 import { handleMcp, VERSION } from "./mcp";
 import type { Env } from "./registry";
 import { UI_HTML } from "./frontend.gen";
@@ -17,6 +17,20 @@ function withHeaders(res: Response): Response {
   const out = new Response(res.body, res);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
   return out;
+}
+
+const NON_SPA_PATHS = new Set([
+  "/health",
+  "/auth/google/callback",
+  "/.well-known/oauth-protected-resource/mcp",
+  "/setup-agent.md",
+]);
+
+function isSpaPath(path: string): boolean {
+  if (path.startsWith("/api/") || path.startsWith("/mcp")) return false;
+  if (NON_SPA_PATHS.has(path)) return false;
+  const last = path.split("/").pop() ?? "";
+  return !/\.[A-Za-z0-9]+$/.test(last);
 }
 
 export default {
@@ -44,7 +58,9 @@ export default {
         }),
         { headers: { "content-type": "application/json" } },
       );
-    } else if (path === "/" && req.method === "GET") {
+    } else if (path === "/setup-agent.md") {
+      res = await handleSetupAgentDoc(req, env);
+    } else if ((req.method === "GET" || req.method === "HEAD") && isSpaPath(path)) {
       res = new Response(UI_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
     } else {
       res = new Response("Not found", { status: 404 });
