@@ -4,20 +4,25 @@ import { api, fmtDate, type Metrics } from "../api";
 export function Activity() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
+  const [error, setError] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    void api<Metrics>("/api/metrics").then(({ data }) => {
-      if (!cancelled) setMetrics(data);
-    });
+    void api<Metrics>("/api/metrics").then(({ res, data }) => {
+      if (cancelled) return;
+      if (res.ok) setMetrics(data);
+      else setError(true);
+    }).catch(() => { if (!cancelled) setError(true); });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  if (error) return <p role="alert">Could not load activity. Refresh to try again.</p>;
   if (!metrics) return <div className="card small muted">Loading…</div>;
 
   return (
     <div>
+      <h1>Activity</h1>
       <div className="card">
         <h3>MCP calls (last {metrics.window_days} days)</h3>
         {metrics.tools.length > 0 ? (

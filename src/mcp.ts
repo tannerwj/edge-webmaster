@@ -2,7 +2,8 @@ import { packStatuses, searchTools, type Env, type ToolDef } from "./registry";
 import { PACKS } from "./packs";
 import { liveToolsFor } from "./runtime";
 import { toolDeclarations } from "./registry";
-import { runExecute } from "./sandbox";
+import { EXECUTE_WALL_SECONDS, runExecute } from "./sandbox";
+import { accessEmail } from "./access";
 import { authenticateAgentToken, touchToken, trackCall, type AgentToken } from "./store";
 import { isRecord, OpError, str } from "./util";
 
@@ -52,7 +53,7 @@ function executeToolDef(tools: ToolDef[]): Record<string, unknown> {
     description:
       "Run JavaScript in an isolated sandbox with typed proxies for every connected webmaster tool. " +
       "Write one async snippet using the namespace objects; `return` the result. Example: `const s = await gsc.list_sites({}); return s;` " +
-      "Chain calls and filter in code — only your return value comes back. No network, no env, no recursion. Max 200KB code, 10s, 50 tool calls.\n\n" +
+      `Chain calls and filter in code — only your return value comes back. No network, no env, no recursion. Max 200KB code, ${EXECUTE_WALL_SECONDS}s, 50 tool calls.\n\n` +
       (decls ? `Available tools:\n\`\`\`ts\n${decls}\n\`\`\`` : "No connectors are connected yet, so no namespace tools are available. Ask the owner to finish setup."),
     inputSchema: {
       type: "object",
@@ -116,7 +117,7 @@ function isCodeMode(env: Env): boolean {
 }
 
 async function toolsList(env: Env, auth: AgentToken): Promise<Record<string, unknown>> {
-  const tools = await liveToolsFor(env);
+  const tools = await liveToolsFor(env, auth.grants);
   const visible = tools.filter((t) => !t.write || auth.scope === "write");
   if (isCodeMode(env)) {
     return { tools: [SEARCH_TOOL, executeToolDef(visible)] };
@@ -135,8 +136,8 @@ async function callTool(
   const args = isRecord(params.arguments) ? params.arguments : {};
   const ok = (result: unknown) => json({ jsonrpc: "2.0", id, result });
   if (name === "search_tools") {
-    const tools = await liveToolsFor(env);
-    const found = searchTools(tools, str(args.query));
+    const tools = await liveToolsFor(env, auth.grants);
+    const found = searchTools(tools.filter((tool) => !tool.write || auth.scope === "write"), str(args.query));
     return ok({
       content: [
         {
@@ -153,7 +154,7 @@ async function callTool(
   if (name === "execute") {
     return ok(await runExecute(env, ctx, str(args.code), { tokenId: auth.id, scope: auth.scope }));
   }
-  const tools = await liveToolsFor(env);
+  const tools = await liveToolsFor(env, auth.grants);
   const tool = tools.find((t) => t.name === name);
   if (!tool) {
     const statuses = await packStatuses(env, PACKS);
@@ -231,25 +232,35 @@ function simpleResult(body: RpcBody): unknown {
   }
 }
 
+async function authenticate(req: Request, env: Env, ctx: ExecutionContext): Promise<AgentToken | null> {
+  const header = req.headers.get("authorization") ?? "";
+  const raw = /^Bearer (ew_\S+)$/i.exec(header)?.[1];
+  if (raw) {
+    const token = await authenticateAgentToken(env, raw);
+    if (token) await touchToken(ctx, env, token.id);
+    return token;
+  }
+  if (new URL(req.url).pathname === "/mcp/token") return null;
+  const email = await accessEmail(req, env, env.ACCESS_MCP_AUD);
+  return email ? { id: "access:" + email, name: email, scope: "read" } : null;
+}
+
 export async function handleMcp(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method !== "POST") {
     return json({ jsonrpc: "2.0", id: null, error: { code: -32000, message: "Use POST." } }, 405, { allow: "POST" });
   }
-  const header = req.headers.get("authorization") ?? "";
-  const raw = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
-  const auth = raw ? await authenticateAgentToken(env, raw) : null;
+  const auth = await authenticate(req, env, ctx);
   if (!auth) {
     return json(
       {
         jsonrpc: "2.0",
         id: null,
-        error: { code: -32001, message: "Unauthorized: a Bearer agent token (ew_…) issued in setup is required." },
+        error: { code: -32001, message: "Sign in through Cloudflare Access or use a valid agent token from Agent access." },
       },
       401,
       { "WWW-Authenticate": 'Bearer resource_metadata="/.well-known/oauth-protected-resource/mcp"' },
     );
   }
-  await touchToken(ctx, env, auth.id);
   const body = await readBody(req);
   if (body instanceof Response) return body;
   const protocolError = checkProtocol(req, body);

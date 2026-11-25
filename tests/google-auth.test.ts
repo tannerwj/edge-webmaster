@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionCookieValue } from "../src/prefs";
 import { handleApi } from "../src/api";
 import { deleteCredential, getCredential, putCredential } from "../src/creds";
 import {
@@ -42,7 +43,7 @@ class FakeD1 {
 }
 
 function makeEnv(db: FakeD1): Env {
-  return { DB: db as unknown as D1Database, DEPLOYMENT_SECRET: "google-auth-test-secret" };
+  return { DB: db as unknown as D1Database, SETUP_TOKEN: "test-session", DEPLOYMENT_SECRET: "google-auth-test-secret" };
 }
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
@@ -51,11 +52,11 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function api(env: Env, path: string, method: string, body?: unknown): Promise<Response> {
+async function api(env: Env, path: string, method: string, body?: unknown): Promise<Response> {
   return handleApi(
     new Request(`https://x.test${path}`, {
       method,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", cookie: "ew_setup=" + await sessionCookieValue(env) },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
@@ -83,7 +84,7 @@ function derivedTokenFetch(counter: { calls: number }, expiresIn = 3600) {
   return async (url: string, init?: RequestInit) => {
     counter.calls += 1;
     expect(String(url)).toContain("oauth2.googleapis.com/token");
-    const params = new URLSearchParams(String(init?.body ?? ""));
+    const params = new URLSearchParams(init?.body instanceof URLSearchParams || typeof init?.body === "string" ? init.body : "");
     return jsonResponse({ access_token: `tok-for-${params.get("refresh_token")}`, expires_in: expiresIn });
   };
 }

@@ -4,6 +4,9 @@ import { isRecord } from "./util";
 export interface Env extends CredEnv {
   LOADER?: WorkerLoader;
   MCP_MODE?: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_ADMIN_AUD?: string;
+  ACCESS_MCP_AUD?: string;
   PUBLIC_URL?: string;
 }
 
@@ -18,6 +21,7 @@ export interface ToolDef {
   namespace: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  requiresCredential?: boolean;
   write: boolean;
   handler: (ctx: ToolCtx, args: Record<string, unknown>) => Promise<unknown>;
 }
@@ -63,7 +67,6 @@ export interface ConnectorPack {
   availableWithoutSetup?: boolean;
   setupFields: SetupField[];
   credentialsPresent: (env: Env) => Promise<boolean>;
-  configured: (env: Env) => Promise<boolean>;
   health: (env: Env) => Promise<PackHealth>;
   tools: ToolDef[];
 }
@@ -153,7 +156,7 @@ export async function packStatuses(
 }
 
 export function liveTools(statuses: PackStatus[]): ToolDef[] {
-  return statuses.filter((s) => s.advertise).flatMap((s) => s.pack.tools);
+  return statuses.filter((s) => s.advertise).flatMap((s) => s.pack.tools.filter((t) => !t.requiresCredential || s.credentialsPresent));
 }
 
 export function searchTools(tools: ToolDef[], query: string, limit = 20): ToolDef[] {

@@ -3,24 +3,31 @@
   "name": "edge-webmaster",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "minify": true,
-  "workers_dev": false,
+  "keep_vars": true,
+  "workers_dev": true,
   "preview_urls": false,
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true
+  },
   "vars": {
-    "MCP_MODE": "code",
-    "PUBLIC_URL": "https://webmaster.tannerwj.dev"
+    "MCP_MODE": "code"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "edge-webmaster",
-      "database_id": "7ceb8e60-b239-45bb-9fcd-7e123c97c0f7",
       "migrations_dir": "migrations"
     }
   ],
-  "worker_loaders": [{ "binding": "LOADER" }],
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
   "env": {
     "staging": {
       "name": "edge-webmaster-staging",
@@ -37,7 +44,32 @@
           "migrations_dir": "migrations"
         }
       ],
-      "worker_loaders": [{ "binding": "LOADER" }]
+      "worker_loaders": [
+        {
+          "binding": "LOADER"
+        }
+      ]
+    },
+    "production": {
+      "name": "edge-webmaster",
+      "vars": {
+        "MCP_MODE": "code",
+        "PUBLIC_URL": "https://webmaster.tannerwj.dev"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "edge-webmaster",
+          "database_id": "7ceb8e60-b239-45bb-9fcd-7e123c97c0f7",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "worker_loaders": [
+        {
+          "binding": "LOADER"
+        }
+      ],
+      "workers_dev": false
     }
   }
 }

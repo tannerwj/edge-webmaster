@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sessionCookieValue } from "../src/prefs";
 import { handleApi } from "../src/api";
 import { putCredential } from "../src/creds";
 import { bingPack } from "../src/packs/bing";
@@ -64,7 +65,6 @@ function fakePack(over: Partial<ConnectorPack>): ConnectorPack {
     recommendation: "Try it",
     setupFields: [],
     credentialsPresent: async () => false,
-    configured: async () => false,
     health: async () => ({ ok: true, detail: "healthy", count: 2 }),
     tools: [],
     ...over,
@@ -256,7 +256,9 @@ describe("/api/status dashboard summary", () => {
     const db = new FakeD1();
     const env = makeEnv(db);
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-    const res = await handleApi(new Request("https://x.test/api/status"), env, ctx, "/api/status");
+    env.SETUP_TOKEN = "status-test";
+    const cookie = "ew_setup=" + await sessionCookieValue(env);
+    const res = await handleApi(new Request("https://x.test/api/status", { headers: { cookie } }), env, ctx, "/api/status");
     const body = (await res.json()) as {
       summary: Record<string, unknown>;
       connectors: Record<string, unknown>[];
@@ -271,7 +273,7 @@ describe("/api/status dashboard summary", () => {
     expect(byId["pagespeed-crux"]?.status).toBe("available");
     expect(byId["google-search-console"]?.status).toBe("not_connected");
     expect(byId["google-search-console"]?.recommendation).toContain("Start here");
-    expect(byId["pagespeed-crux"]?.recommendation).toContain("No setup");
+    expect(byId["pagespeed-crux"]?.recommendation).toContain("CrUX requires an API key");
     expect(Array.isArray(byId["bing-webmaster"]?.examples)).toBe(true);
   });
 });

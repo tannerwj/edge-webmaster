@@ -1,3 +1,4 @@
+import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
@@ -53,10 +54,19 @@ class FakeD1 {
 }
 
 const SETUP_TOKEN = "test-setup-token-value";
-const ACCESS = { "cf-access-authenticated-user-email": "owner@example.com" };
+const issuer = "https://example.cloudflareaccess.com";
+const pair = await generateKeyPair("RS256");
+const publicKey = { ...await exportJWK(pair.publicKey), kid: "fixture" };
+async function signedHeaders(aud = "dashboard") {
+  const assertion = await new SignJWT({ email: "owner@example.com" })
+    .setProtectedHeader({ alg: "RS256", kid: "fixture" }).setIssuer(issuer)
+    .setSubject("owner").setAudience(aud).setExpirationTime("10m").sign(pair.privateKey);
+  vi.stubGlobal("fetch", async () => Response.json({ keys: [publicKey] }));
+  return { "cf-access-jwt-assertion": assertion };
+}
 
 function makeEnv(db: FakeD1, over: Partial<Env> = {}): Env {
-  return { DB: db as unknown as D1Database, DEPLOYMENT_SECRET: "backend-test-secret", ...over };
+  return { DB: db as unknown as D1Database, DEPLOYMENT_SECRET: "backend-test-secret", ACCESS_TEAM_DOMAIN: issuer, ACCESS_ADMIN_AUD: "dashboard", ...over };
 }
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
@@ -100,7 +110,7 @@ describe("SPA fallback routing", () => {
   });
 
   it("keeps unknown /api paths as JSON 404, not the shell", async () => {
-    const res = await call(env(), "/api/does-not-exist");
+    const res = await call(env(), "/api/does-not-exist", { headers: await signedHeaders() });
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(await res.json()).toEqual({ error: "Not found." });
@@ -126,9 +136,18 @@ describe("SPA fallback routing", () => {
 });
 
 describe("/api/me, preferences and logout", () => {
+  it("separates agent and administrator identities", async () => {
+    const env = makeEnv(new FakeD1(), { ACCESS_MCP_AUD: "agents" });
+    const headers = await signedHeaders("agents");
+    expect((await call(env, "/api/me", { headers })).status).toBe(401);
+    const rpc = jsonInit("POST", { jsonrpc: "2.0", id: 1, method: "tools/list" }, headers);
+    expect((await call(env, "/mcp", rpc)).status).toBe(200);
+    expect((await call(env, "/api/me", { headers: { "cf-access-authenticated-user-email": "owner@example.com" } })).status).toBe(401);
+  });
+
   it("reports the Access identity and defaults theme to system", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
-    const res = await call(env, "/api/me", { headers: ACCESS });
+    const res = await call(env, "/api/me", { headers: await signedHeaders() });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       email: "owner@example.com",
@@ -137,14 +156,14 @@ describe("/api/me, preferences and logout", () => {
     });
   });
 
-  it("reports the setup-token identity after login, and open identity in bootstrap", async () => {
+  it("reports the setup-token identity after login, and locks setup before configuration", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
     const cookie = await loginCookie(env);
     const res = await call(env, "/api/me", { headers: { cookie } });
     expect(await res.json()).toEqual({ email: null, identity: "setup-token", preferences: { theme: "system" } });
 
     const open = await call(makeEnv(new FakeD1()), "/api/me");
-    expect(await open.json()).toEqual({ email: null, identity: "open", preferences: { theme: "system" } });
+    expect(open.status).toBe(401);
   });
 
   it("gates /api/me when unauthenticated", async () => {
@@ -155,25 +174,25 @@ describe("/api/me, preferences and logout", () => {
 
   it("round-trips a theme per identity and rejects invalid themes", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
-    const put = await call(env, "/api/preferences", jsonInit("PUT", { theme: "dark" }, ACCESS));
+    const put = await call(env, "/api/preferences", jsonInit("PUT", { theme: "dark" }, await signedHeaders()));
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ ok: true, preferences: { theme: "dark" } });
-    const me = await call(env, "/api/me", { headers: ACCESS });
+    const me = await call(env, "/api/me", { headers: await signedHeaders() });
     expect(((await me.json()) as { preferences: { theme: string } }).preferences.theme).toBe("dark");
 
     const cookie = await loginCookie(env);
     const other = await call(env, "/api/me", { headers: { cookie } });
     expect(((await other.json()) as { preferences: { theme: string } }).preferences.theme).toBe("system");
 
-    const bad = await call(env, "/api/preferences", jsonInit("PUT", { theme: "neon" }, ACCESS));
+    const bad = await call(env, "/api/preferences", jsonInit("PUT", { theme: "neon" }, await signedHeaders()));
     expect(bad.status).toBe(400);
-    const missing = await call(env, "/api/preferences", jsonInit("PUT", {}, ACCESS));
+    const missing = await call(env, "/api/preferences", jsonInit("PUT", {}, await signedHeaders()));
     expect(missing.status).toBe(400);
   });
 
   it("logout clears the ew_setup cookie", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
-    const res = await call(env, "/api/logout", { method: "POST", headers: ACCESS });
+    const res = await call(env, "/api/logout", { method: "POST", headers: await signedHeaders() });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     const setCookie = res.headers.get("set-cookie") ?? "";
@@ -193,7 +212,7 @@ describe("/setup-agent.md", () => {
 
   it("serves a self-config doc with the request origin and no real token", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
-    const res = await call(env, "/setup-agent.md", { headers: ACCESS });
+    const res = await call(env, "/setup-agent.md", { headers: await signedHeaders() });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/markdown");
     const body = await res.text();
@@ -206,8 +225,24 @@ describe("/setup-agent.md", () => {
 
   it("prefers PUBLIC_URL for the instance origin", async () => {
     const env = makeEnv(new FakeD1(), { SETUP_TOKEN, PUBLIC_URL: "https://webmaster.example.com" });
-    const res = await call(env, "/setup-agent.md", { headers: ACCESS });
+    const res = await call(env, "/setup-agent.md", { headers: await signedHeaders() });
     expect(await res.text()).toContain("https://webmaster.example.com/mcp");
+  });
+});
+
+describe("dashboard reports", () => {
+  it("returns a mobile score using the configured pack and keeps write tools off the report route", async () => {
+    const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
+    const cookie = await loginCookie(env);
+    vi.stubGlobal("fetch", async (url: string) => {
+      expect(new URL(url).searchParams.get("url")).toBe("https://example.com/");
+      return Response.json({ lighthouseResult: { categories: { performance: { score: 0.93 } } } });
+    });
+    const input = jsonInit("POST", { url: "https://example.com/", strategy: "mobile" }, { cookie });
+    const res = await call(env, "/api/reports/pagespeed_run", input);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ result: { result: { score: 0.93 } } });
+    expect((await call(env, "/api/reports/gsc_submit_sitemap", input)).status).toBe(404);
   });
 });
 

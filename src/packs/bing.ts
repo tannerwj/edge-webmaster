@@ -9,7 +9,7 @@ interface BingCred {
 }
 
 async function bingCall(env: Parameters<typeof getCredential>[0], method: string, site?: string) {
-  const cred = await getCredential<BingCred>(env as never, "bing");
+  const cred = await getCredential<BingCred>(env, "bing");
   if (!cred?.api_key) throw new OpError("Bing Webmaster is not connected. Add its API key in setup.");
   const params = new URLSearchParams({ apikey: cred.api_key });
   if (site) params.set("siteUrl", site);
@@ -64,7 +64,6 @@ export const bingPack: ConnectorPack = {
     },
   ],
   credentialsPresent: async (env) => Boolean((await getCredential<BingCred>(env, "bing"))?.api_key),
-  configured: async (env) => Boolean((await getCredential<BingCred>(env, "bing"))?.api_key),
   health: async (env) => {
     const sites = await bingCall(env, "GetUserSites");
     const count = Array.isArray(sites) ? sites.length : 0;

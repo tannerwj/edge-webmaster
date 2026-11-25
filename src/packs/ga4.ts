@@ -7,7 +7,7 @@ const ADMIN = "https://analyticsadmin.googleapis.com/v1beta";
 
 function propertyPath(args: Record<string, unknown>): string {
   const id = str(args.property_id).replace(/^properties\//, "");
-  if (!id) throw new OpError("property_id is required (numeric GA4 property id).");
+  if (!/^\d+$/.test(id)) throw new OpError("property_id is required (numeric GA4 property id).");
   return `properties/${id}`;
 }
 
@@ -51,12 +51,12 @@ export const ga4Pack: ConnectorPack = {
   recommendation: "Pairs with Search Console",
   setupFields: [],
   credentialsPresent: googleConfigured,
-  configured: googleConfigured,
   health: async (env) => {
     const data = await googleFetch(env, `${ADMIN}/accountSummaries`);
     const accounts = Array.isArray(data.accountSummaries) ? data.accountSummaries : [];
     let count = 0;
     const items: string[] = [];
+    const propertyIds: string[] = [];
     for (const acct of accounts) {
       const props = (acct as { propertySummaries?: unknown }).propertySummaries;
       count += Array.isArray(props) ? props.length : 0;
@@ -64,10 +64,11 @@ export const ga4Pack: ConnectorPack = {
       for (const prop of props) {
         if (!isRecord(prop)) continue;
         const name = str(prop.displayName) || str(prop.property);
+        if (prop.property && propertyIds.length < 100) propertyIds.push(str(prop.property));
         if (name && items.length < 100) items.push(name);
       }
     }
-    return { ok: true, detail: `${count} properties visible`, count, items };
+    return { ok: true, detail: `${count} properties visible`, count, items, propertyIds };
   },
   tools: [
     {

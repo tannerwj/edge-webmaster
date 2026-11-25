@@ -1,3 +1,4 @@
+import { PACKS } from "./packs";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { toolForProxy } from "./registry";
 import type { Env } from "./registry";
@@ -10,15 +11,20 @@ interface SandboxProps {
   scope: "read" | "write";
 }
 
-const NAMESPACES = ["gsc", "ga4", "bing", "pagespeed"];
+export const EXECUTE_WALL_SECONDS = 90;
+const NAMESPACES = PACKS.map((pack) => pack.namespace);
+const PROXY_PARAMETERS = NAMESPACES.join(", ");
 
 export class WebmasterCodeSandbox extends WorkerEntrypoint<Env> {
   async callTool(namespace: string, method: string, args: Record<string, unknown>): Promise<unknown> {
     const props = this.ctx.props as SandboxProps;
     if (!props?.tokenId) throw new Error("credential rejected");
-    const active = await tokenStillActive(this.env, props.tokenId);
+    // Props are issued by the parent Worker for this authenticated execute request.
+    const active = props.tokenId.startsWith("access:")
+      ? { id: props.tokenId, scope: "read" as const, grants: null }
+      : await tokenStillActive(this.env, props.tokenId);
     if (!active) throw new Error("credential rejected");
-    const tools = await liveToolsFor(this.env);
+    const tools = await liveToolsFor(this.env, active.grants);
     const tool = toolForProxy(tools, namespace, method);
     if (!tool) {
       throw new Error(
@@ -141,8 +147,7 @@ export async function runExecute(
   if (!code.trim()) return fail("Error: code is required.");
   if (code.length > 200_000) return fail("Error: code exceeds 200KB.");
   if (!env.LOADER) return fail("Error: the code-execution sandbox is not configured on this worker.");
-  const exportsObj = ctx.exports;
-  const sandboxExport = isRecord(exportsObj) ? exportsObj.WebmasterCodeSandbox : undefined;
+  const sandboxExport = isRecord(ctx.exports) ? ctx.exports.WebmasterCodeSandbox : undefined;
   if (typeof sandboxExport !== "function") return fail("Error: sandbox entrypoint unavailable.");
   let worker: WorkerStub;
   try {
@@ -153,7 +158,7 @@ export async function runExecute(
       mainModule: "bootstrap.js",
       modules: {
         "bootstrap.js": BOOTSTRAP,
-        "user-code.js": `export async function run({ gsc, ga4, bing, pagespeed }, console) {\n${code}\n}`,
+        "user-code.js": `export async function run({ ${PROXY_PARAMETERS} }, console) {\n${code}\n}`,
       },
       env: { BRIDGE: bridge },
       globalOutbound: null,
@@ -167,7 +172,7 @@ export async function runExecute(
     const runPromise = Promise.resolve((entry as unknown as { run(): Promise<unknown> }).run());
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error("execution timed out after 10s")), 10_000);
+      timeoutId = setTimeout(() => reject(new Error(`execution timed out after ${EXECUTE_WALL_SECONDS}s`)), EXECUTE_WALL_SECONDS * 1000);
     });
     try {
       result = await Promise.race([runPromise, timeout]);

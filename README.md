@@ -7,7 +7,7 @@ that runs in **your own** Cloudflare account.
 
 No hosted shim holds your credentials. You deploy it, you connect your own
 Google and Bing accounts in its dashboard, and your agents (Muse, Claude
-Code, Grok, any MCP client) talk to *your* instance with a token *you* issued.
+Code, Grok, any MCP client) talk to *your* instance through Cloudflare Access or with a scoped token you issue.
 
 Part of the Edge family: [Edge IDP](https://github.com/tannerwj/edge-idp) ·
 [Edge Mail](https://github.com/tannerwj/edge-mail).
@@ -31,42 +31,11 @@ tool is listed directly.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tannerwj/edge-webmaster)
 
-1. Click deploy (or `git clone`, `npm install`, `npm run deploy`). Create the
-   D1 database and apply migrations as [DEPLOY.md](DEPLOY.md) describes, and
-   set the `DEPLOYMENT_SECRET` and `SETUP_TOKEN` secrets.
-2. Open your worker's URL. The **dashboard** (Dashboard, Connections,
-   Agent Tokens, Activity) walks you through connecting each platform — every
-   connector has its own page with numbered, turnkey setup steps and a Test
-   button whose result appears right where you clicked it. Connection status
-   is honest and five-state — *not connected*, *available* (works with no
-   setup), *configured*, *connected*, *error* — and a connector only reads
-   **Connected** after a real health check against the platform passes.
-   - **Google** — two ways in, one connection lights up both Search Console
-     and GA4:
-     - **OAuth sign-in (recommended for your own sites)** — it acts as your
-       Google account, so every property you already have access to works
-       with zero per-property grants. You create your own Google Cloud OAuth
-       client; the setup walks the consent-screen steps (External, then
-       Publish the app — or stay in Testing with yourself as a test user and
-       accept that Google expires refresh tokens after 7 days) and shows the
-       exact redirect URI to paste.
-     - **Service account (headless / team setups)** — no consent screen, no
-       token expiry, but you grant the service account's email access on each
-       property yourself; a Domain property needs just one grant per domain.
-   - **Bing** — paste a Webmaster API key.
-   - **PageSpeed/CrUX** — works immediately; an API key is optional and only
-     raises quotas.
-3. Mint an **agent token** (read or write scope) on the Agent Tokens page.
-4. Point your MCP client at `https://<your-instance>/mcp` with
-   `Authorization: Bearer ew_…`. The **Set up your agent** panel on the Agent
-   Tokens page has per-client copy-paste snippets (Muse, Claude Code, Grok,
-   generic) plus a downloadable agent-ready Markdown file — also served at
-   `GET /setup-agent.md` — that you can hand to an agent so it can configure
-   itself.
-
-Put Cloudflare Access in front of the dashboard pages for real deployments —
-[DEPLOY.md](DEPLOY.md) covers the Access + your own IdP (e.g. Edge IDP /
-Johnson ID) wiring and the `/mcp` bypass pattern.
+1. Choose a Workers Paid account, your repository and D1 database. Supply two random secrets from your password manager, `DEPLOYMENT_SECRET` and `SETUP_TOKEN`. Keep the suggested build and deploy commands. Code mode uses billable Dynamic Workers. [Cloudflare pricing](https://developers.cloudflare.com/dynamic-workers/pricing/)
+2. Open your Worker, unlock the dashboard, and connect the providers you use. Google sign-in covers Search Console and GA4. Bing uses a Webmaster API key. PageSpeed can test public URLs immediately. Add a Google API key for CrUX real-user reports.
+3. Open **Site reports** to run a Google query report, a GA4 channel report, a Bing query report or a mobile PageSpeed test. Select a property or enter its identifier. **Copy task for agent** carries the selected report and property into your agent.
+4. Open **Agent access → Configure Access for this installation**. The wizard walks you through your hostname, administrator and agent sign-in policies, Managed OAuth, client callbacks, and the four Worker variables. Click **Check Access discovery**, add the displayed URL to your agent and sign in.
+5. Paste the task from **Site reports** into your agent. A managed OAuth login reads all connected properties. For per-site permissions, create a scoped token and use the separate token endpoint. [Access setup and troubleshooting](DEPLOY.md#give-an-agent-access)
 
 ## What's inside
 
@@ -98,9 +67,10 @@ DEPLOY.md       Full deploy guide: D1, secrets, Cloudflare Access, staging
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars   # fill in local secrets
+export SETUP_TOKEN=local-development-only  # disposable localhost fixture
+# For real provider credentials, inject private runtime secrets from your password manager.
 npx wrangler d1 migrations apply edge-webmaster --local
-npm run dev               # wrangler dev
+npm run dev -- --var "SETUP_TOKEN:$SETUP_TOKEN"  # localhost only
 npm test                  # unit + mocked-upstream pack tests
 npm run probe             # scripted probes against the dev server (see tests/e2e/probe.mjs)
 npm run check             # abacus gates: lint, abc, tsc, deadcode, secrets, cycles, dupes, todos, ratchet
@@ -109,10 +79,10 @@ npm run check             # abacus gates: lint, abc, tsc, deadcode, secrets, cyc
 Verify changes on the staging twin before they reach production:
 
 ```bash
-npm run deploy:staging    # staging worker + its own D1, no Access in front
+npm run deploy:staging    # staging worker + its own D1 and Access apps
 npm run deploy:prod       # production, once staging checks out
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Free forever; deploy as many instances as you like.
+MIT — see [LICENSE](LICENSE). The source is freely licensed. Cloudflare usage is billed to the deploying account.

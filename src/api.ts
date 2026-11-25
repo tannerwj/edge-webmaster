@@ -1,3 +1,5 @@
+import { liveToolsFor } from "./runtime";
+import { validGrants } from "./grants";
 import { deleteCredential, getCredential, putCredential } from "./creds";
 import {
   googleAuthSource,
@@ -11,27 +13,16 @@ import {
   type GoogleOAuthTokens,
 } from "./google";
 import { PACKS } from "./packs";
-import { getTheme, hasSetupSession, isTheme, resolveIdentity, sessionCookieValue, setTheme } from "./prefs";
+import { type Identity, getTheme, isTheme, resolveIdentity, sessionCookieValue, setTheme } from "./prefs";
 import { isActiveStatus, packStatus, packStatuses, type ConnectionStatus, type Env, type PackStatus } from "./registry";
 import { audit, createAgentToken, listAgentTokens, revokeAgentToken } from "./store";
-import { nowSec, OpError, randomToken, str, timingSafeEqual } from "./util";
+import { isRecord, nowSec, OpError, randomToken, str, timingSafeEqual } from "./util";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json", ...headers },
   });
-}
-
-export async function isAdmin(req: Request, env: Env): Promise<boolean> {
-  if (req.headers.get("cf-access-authenticated-user-email")) return true;
-  if (!env.SETUP_TOKEN) return true; // first-run bootstrap: no Access and no token configured yet
-  return hasSetupSession(req, env);
-}
-
-async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
-  if (await isAdmin(req, env)) return null;
-  return json({ error: "Setup access required. Sign in through Cloudflare Access or enter the setup token." }, 401);
 }
 
 interface NextStep {
@@ -99,7 +90,7 @@ async function dashboardSummary(env: Env, statuses: PackStatus[]) {
     active_agent_tokens: activeTokens,
     tool_calls_last_7d: toolCalls,
     latest_audit: latestAudit,
-    recommended_next_step: nextStep(statuses, activeTokens),
+    recommended_next_step: nextStep(statuses, activeTokens || (env.ACCESS_MCP_AUD ? 1 : 0)),
   };
 }
 
@@ -155,7 +146,8 @@ async function statusBody(env: Env) {
   const googleState = await googleConnectionState(env);
   return {
     mode: env.MCP_MODE ?? "code",
-    bootstrap_open: !env.SETUP_TOKEN,
+    bootstrap_open: false,
+    managed_oauth: Boolean(env.ACCESS_MCP_AUD && env.ACCESS_TEAM_DOMAIN),
     summary,
     dashboard: summary,
     connectors: statuses.map((s) => {
@@ -197,7 +189,7 @@ async function statusBody(env: Env) {
         health,
         checked: s.checked,
         setup_fields: s.pack.setupFields,
-        tools: s.pack.tools.map((t) => t.name),
+        tools: s.pack.tools.filter((t) => !t.requiresCredential || s.credentialsPresent).map((t) => t.name),
         ...(isGoogle ? { google_connection: googleState } : {}),
       };
     }),
@@ -303,15 +295,12 @@ async function configureConnector(env: Env, id: string, body: Record<string, unk
   if (id === "google-search-console" || id === "google-analytics") {
     return configureGoogleConnector(env, body);
   }
-  if (id === "bing-webmaster") {
-    await putCredential(env, "bing", { api_key: str(body.api_key) });
-    return json({ ok: true, saved: "api_key" });
-  }
-  if (id === "pagespeed-crux") {
-    await putCredential(env, "pagespeed", { api_key: str(body.api_key) });
-    return json({ ok: true, saved: "api_key" });
-  }
-  return json({ error: "Unknown connector." }, 404);
+  const pack = PACKS.find((candidate) => candidate.id === id);
+  if (!pack) return json({ error: "Unknown connector." }, 404);
+  const key = str(body.api_key).trim();
+  if (!key) return json({ error: "Enter an API key before saving." }, 400);
+  await putCredential(env, pack.connectionId, { api_key: key });
+  return json({ ok: true, saved: "api_key" });
 }
 
 async function disconnectConnector(env: Env, id: string): Promise<Response> {
@@ -334,8 +323,13 @@ export async function handleApi(req: Request, env: Env, ctx: ExecutionContext, p
   const url = new URL(req.url);
   if (path === "/api/login" && req.method === "POST") return login(req, env);
   if (path === "/api/feedback" && req.method === "POST") return handleFeedback(req, env);
-  const gate = await requireAdmin(req, env);
-  if (gate) return gate;
+  const identity = await resolveIdentity(req, env);
+  if (!identity) return json({ error: "Sign in with Access or your setup token." }, 401);
+  if (path === "/api/me" && req.method === "GET") {
+    const theme = await getTheme(env, identity.key);
+    return json({ email: identity.email, identity: identity.identity, preferences: { theme } });
+  }
+  if (path === "/api/preferences" && req.method === "PUT") return updatePreferences(req, env, identity);
   return routeAdmin(req, env, ctx, path, url);
 }
 
@@ -352,9 +346,8 @@ async function login(req: Request, env: Env): Promise<Response> {
 
 async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: string, url: URL): Promise<Response> {
   if ((path === "/api/status" || path === "/api/dashboard") && req.method === "GET") return json(await statusBody(env));
-  if (path === "/api/me" && req.method === "GET") return me(req, env);
-  if (path === "/api/preferences" && req.method === "PUT") return updatePreferences(req, env);
   if (path === "/api/logout" && req.method === "POST") return logout();
+  if (path.startsWith("/api/reports/") && req.method === "POST") return runReport(req, env, path.slice("/api/reports/".length));
   const google = await routeGoogleAdmin(req, env, ctx, path, url);
   if (google) return google;
   if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
@@ -365,6 +358,20 @@ async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: s
   return json({ error: "Not found." }, 404);
 }
 
+async function runReport(req: Request, env: Env, name: string): Promise<Response> {
+  const tools = await liveToolsFor(env);
+  const tool = tools.find((t) => t.name === name && !t.write);
+  if (!tool) return json({ error: "Connect this provider to run its reports." }, 404);
+  const args = await req.json().catch(() => null);
+  if (!isRecord(args)) return json({ error: "Report inputs must be an object." }, 400);
+  try {
+    const result = await tool.handler({ env, tokenId: "dashboard", scope: "read" }, args);
+    return json({ result });
+  } catch (error) {
+    return json({ error: error instanceof OpError ? error.message : "The report could not be completed. Test the connection and try again." }, 400);
+  }
+}
+
 async function routeGoogleAdmin(
   req: Request,
   env: Env,
@@ -372,7 +379,7 @@ async function routeGoogleAdmin(
   path: string,
   url: URL,
 ): Promise<Response | null> {
-  if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
+  if (path === "/api/google/oauth-url" && req.method === "GET") return url.searchParams.has("preview") ? json({ redirect_uri: googleRedirectUri(env, url.origin) }) : oauthUrl(env, url);
   if (path === "/api/google/oauth-client" && req.method === "DELETE") {
     await deleteCredential(env, "google_oauth_client");
     await deleteCredential(env, "google_oauth_tokens");
@@ -389,17 +396,10 @@ async function routeGoogleAdmin(
   return null;
 }
 
-async function me(req: Request, env: Env): Promise<Response> {
-  const identity = await resolveIdentity(req, env);
-  const theme = await getTheme(env, identity.key);
-  return json({ email: identity.email, identity: identity.identity, preferences: { theme } });
-}
-
-async function updatePreferences(req: Request, env: Env): Promise<Response> {
+async function updatePreferences(req: Request, env: Env, identity: Identity): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const theme = body.theme;
   if (!isTheme(theme)) return json({ error: "theme must be one of: light, dark, system." }, 400);
-  const identity = await resolveIdentity(req, env);
   await setTheme(env, identity.key, theme);
   return json({ ok: true, preferences: { theme } });
 }
@@ -411,67 +411,36 @@ function logout(): Response {
 }
 
 export async function handleSetupAgentDoc(req: Request, env: Env): Promise<Response> {
-  if (!(await isAdmin(req, env))) {
+  if (!(await resolveIdentity(req, env))) {
     return new Response("Setup access required. Sign in through Cloudflare Access or enter the setup token.", {
       status: 401,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
   const origin = (env.PUBLIC_URL ?? new URL(req.url).origin).replace(/\/$/, "");
-  return new Response(setupAgentDoc(origin), {
+  return new Response(new URL(req.url).searchParams.get("auth") !== "token" && env.ACCESS_MCP_AUD && env.ACCESS_TEAM_DOMAIN
+    ? `# Connect your agent
+
+Add ${origin}/mcp as a remote HTTP MCP server. Sign in with Cloudflare Access when prompted. Use search_tools to discover available operations and execute to run a report. Access sign-ins have read access to all connected properties.
+`
+    : setupAgentDoc(origin), {
     headers: { "content-type": "text/markdown; charset=utf-8" },
   });
 }
 
 function setupAgentDoc(origin: string): string {
-  return `# Edge Webmaster — agent setup
+  return `# Edge Webmaster agent setup
 
-You are connecting to a self-hosted Edge Webmaster instance. Use this
-document to configure yourself as an MCP client of it.
-
-- Instance: ${origin}
-- MCP endpoint: ${origin}/mcp (streamable HTTP, POST JSON-RPC)
-
-## Authentication
-
-Send the agent token on every MCP request:
+Add a remote HTTP MCP server at ${origin}/mcp/token.
+Set the Authorization header from the token created in Agent access:
 
     Authorization: Bearer <YOUR_TOKEN>
 
-Tokens are per-deployment \`ew_…\` values minted by the instance owner in
-the setup UI under "Agent tokens" (read = query only; write = also
-sitemap submit). If you do not have a token, ask the user to open
-${origin}, sign in, mint one, and paste it to you. Never invent a token,
-reuse one from another instance, or print a token back in full.
-
-## Client modes
-
-- **Code mode (default).** The catalog is two tools: \`search_tools\`
-  (keyword search over the live tool catalog) and \`execute\` (run
-  JavaScript against the typed \`gsc\` / \`ga4\` / \`bing\` / \`pagespeed\`
-  proxies, chaining calls and filtering in code; only the return value
-  comes back). Prefer this mode.
-- **Raw mode.** Every tool is listed directly in the MCP catalog; call
-  tools by name. Used when the deployment sets \`MCP_MODE=raw\`.
-
-## Example tasks
-
-- "Review search performance for the last 28 days and flag the biggest drops."
-- "List the top pages by clicks in Google Search Console."
-- "Check the sitemap status and report any sitemaps with errors."
-- "Summarize GA4 traffic by channel for the last 7 days."
-- "Show the top Bing queries for this site."
-- "Run a PageSpeed check on the home page and summarize Core Web Vitals."
-
-## Troubleshooting
-
-- **401 from /mcp** — token missing, revoked, or expired. Ask the user
-  for a fresh token.
-- **A namespace or tool is missing** — that connector is not connected
-  yet. Ask the user to finish setup at ${origin}.
-- **Upstream Google/Bing errors** — the connector's credentials may be
-  revoked or out of quota; report the error text to the user rather
-  than retrying in a loop.
+Use search_tools to find operations available to your token. Each tool description lists any property restrictions.
+Use execute to run a JavaScript report with the available provider proxies.
+For example, ask your agent to review search performance for your property over the last 28 days.
+A read token can run reports. A write token can also submit a sitemap if the selected property and upstream account permit it.
+If sign-in fails, check the token or create a replacement at ${origin}/tokens.
 `;
 }
 
@@ -513,7 +482,9 @@ async function routeTokens(req: Request, env: Env, ctx: ExecutionContext, path: 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const name = str(body.name) || "agent";
     const scope = str(body.scope) === "write" ? "write" : "read";
-    const created = await createAgentToken(env, name, scope);
+    const grants = body.grants ?? null;
+    if (grants !== null && !validGrants(grants)) return json({ error: "Check the connector selection and property identifiers." }, 400);
+    const created = await createAgentToken(env, name, scope, grants);
     audit(ctx, env, "setup-ui", "token.create", `${name}:${scope}`);
     return json({ token: created.token, record: created.record });
   }

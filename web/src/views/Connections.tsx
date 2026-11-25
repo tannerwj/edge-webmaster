@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Connector, type StatusBody } from "../api";
+import { api, errText, type Connector, type StatusBody } from "../api";
 import { Link } from "../components/nav";
 import { StatusPill } from "../components/StatusPill";
 import { TestConnectionButton } from "../components/TestConnectionButton";
@@ -8,7 +8,7 @@ import { BingSetup, GoogleSetup, PageSpeedSetup, ResultLine, runTest, type TestR
 export function ConnectionsOverview({ status }: { status: StatusBody }) {
   return (
     <div>
-      <h2>Connections</h2>
+      <h1>Connections</h1>
       <div className="connector-grid">
         {status.connectors.map((c) => (
           <section key={c.id} className="connector-card">
@@ -62,19 +62,24 @@ export function ConnectorPage({
 
   const disconnect = async () => {
     setBusy(true);
-    await api(`/api/connectors/${connector.id}`, { method: "DELETE" });
-    setBusy(false);
-    setResult("Disconnected.");
-    refresh();
+    try {
+      const { res, data } = await api(`/api/connectors/${connector.id}`, { method: "DELETE" });
+      setResult(res.ok ? "Disconnected." : errText(data, "Disconnect failed."));
+      if (res.ok) refresh();
+    } catch {
+      setResult("Could not reach the Worker. Try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const showDanger = connector.status === "connected" || connector.status === "configured" || connector.status === "error" || connector.configured;
+  const showDanger = connector.credentials_present || connector.google_connection?.oauth_client_saved;
 
   return (
     <div className="connector-page">
       <p className="small"><Link href="/connections">← All connections</Link></p>
       <div className="page-head">
-        <h2>{connector.name}</h2>
+        <h1>{connector.name}</h1>
         <StatusPill status={connector.status} />
       </div>
       {isGoogle && (
@@ -85,6 +90,18 @@ export function ConnectorPage({
           Google connected. Run a test below to confirm your properties are visible.
         </div>
       )}
+
+      <section className="page-section">
+        <h3>Setup</h3>
+        <div className="card">
+          {isGoogle && <GoogleSetup packs={googlePacks.length ? googlePacks : [connector]} refresh={refresh} onTest={test} />}
+          {connector.id === "bing-webmaster" && <BingSetup c={connector} refresh={refresh} onTest={test} />}
+          {connector.id === "pagespeed-crux" && <PageSpeedSetup c={connector} refresh={refresh} onTest={test} />}
+          {!isGoogle && connector.id !== "bing-webmaster" && connector.id !== "pagespeed-crux" && (
+            <p className="muted">Follow the provider's setup, save credentials, then test above.</p>
+          )}
+        </div>
+      </section>
 
       <div className="summary-grid">
         <section className="page-section">
@@ -126,18 +143,6 @@ export function ConnectorPage({
           </div>
         </section>
       </div>
-
-      <section className="page-section">
-        <h3>Setup</h3>
-        <div className="card">
-          {isGoogle && <GoogleSetup packs={googlePacks.length ? googlePacks : [connector]} refresh={refresh} onTest={test} />}
-          {connector.id === "bing-webmaster" && <BingSetup c={connector} refresh={refresh} onTest={test} />}
-          {connector.id === "pagespeed-crux" && <PageSpeedSetup c={connector} refresh={refresh} onTest={test} />}
-          {!isGoogle && connector.id !== "bing-webmaster" && connector.id !== "pagespeed-crux" && (
-            <p className="muted">Follow the provider's setup, save credentials, then test above.</p>
-          )}
-        </div>
-      </section>
 
       {showDanger && (
         <section className="page-section danger-zone">

@@ -1,8 +1,8 @@
+import { Reports } from "./views/Reports";
 import { useCallback, useEffect, useState } from "react";
 import { api, errText, type Me, type StatusBody, type ThemePref } from "./api";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { Link, navigate, usePath } from "./components/nav";
-import { StatusDot } from "./components/StatusPill";
 import { Activity } from "./views/Activity";
 import { ConnectionsOverview, ConnectorPage } from "./views/Connections";
 import { Dashboard } from "./views/Dashboard";
@@ -88,7 +88,7 @@ export function App() {
     if (params.get("connected") && location.pathname === "/") {
       navigate("/connections/google-search-console?connected=google");
     }
-    void loadStatus();
+    void loadStatus().catch(() => setLoadError("Could not reach the Worker. Check your connection and retry."));
     void loadMe();
   }, [loadStatus, loadMe]);
 
@@ -119,9 +119,10 @@ export function App() {
 
   let view: React.ReactNode;
   if (path === "/") view = <Dashboard status={status} />;
+  else if (path === "/reports") view = <Reports connectors={status.connectors} />;
   else if (path === "/connections") view = <ConnectionsOverview status={status} />;
-  else if (connectorMatch && connector) view = <ConnectorPage connector={connector} all={status.connectors} refresh={loadStatus} />;
-  else if (path === "/tokens") view = <Tokens />;
+  else if (connectorMatch && connector) view = <ConnectorPage key={connector.id} connector={connector} all={status.connectors} refresh={loadStatus} />;
+  else if (path === "/tokens") view = <Tokens connectors={status.connectors} managedOAuth={Boolean(status.managed_oauth)} />;
   else if (path === "/activity") view = <Activity />;
   else view = <NotFound />;
 
@@ -141,19 +142,9 @@ export function App() {
         <div className="brand sidebar-brand">Edge Webmaster</div>
         <nav className="nav">
           {navLink("/", "Dashboard", path === "/")}
-          <p className="nav-section">Connections</p>
-          {status.connectors.map((c) => (
-            <Link
-              key={c.id}
-              href={`/connections/${c.id}`}
-              className={path === `/connections/${c.id}` ? "nav-link nav-sub nav-active" : "nav-link nav-sub"}
-            >
-              <StatusDot status={c.status} />
-              <span>{c.name}</span>
-            </Link>
-          ))}
-          {navLink("/connections", "All connections", path === "/connections")}
-          {navLink("/tokens", "Agent Tokens", path === "/tokens")}
+          {navLink("/reports", "Site reports", path === "/reports")}
+          {navLink("/connections", "Connections", path.startsWith("/connections"))}
+          {navLink("/tokens", "Agent access", path === "/tokens")}
           {navLink("/activity", "Activity", path === "/activity")}
         </nav>
       </aside>
@@ -161,16 +152,6 @@ export function App() {
         <header className="topbar">
           <ProfileMenu me={me} theme={theme} setTheme={setTheme} />
         </header>
-        {status.bootstrap_open && (
-          <div className="card card-danger">
-            <strong>Setup is open.</strong>{" "}
-            <span className="small">
-              No SETUP_TOKEN and no Cloudflare Access detected. Put Access in front of this site or
-              set the SETUP_TOKEN secret, then redeploy — anyone who can reach this page can connect
-              accounts and mint tokens until you do.
-            </span>
-          </div>
-        )}
         {view}
       </main>
     </div>

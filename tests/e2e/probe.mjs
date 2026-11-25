@@ -45,6 +45,9 @@ check("pagespeed always configured", byId["pagespeed-crux"]?.configured === true
 check("google not configured yet", byId["google-search-console"]?.configured === false);
 check("bing not configured yet", byId["bing-webmaster"]?.configured === false);
 
+const unavailableReport = await api("/api/reports/gsc_query_search_analytics", { method: "POST", body: "{}" });
+check("report requests guide users to connector setup", unavailableReport.res.status === 404 && unavailableReport.data.error.includes("Connect"));
+
 const created = await api("/api/tokens", {
   method: "POST",
   body: JSON.stringify({ name: "probe", scope: "read" }),
@@ -83,7 +86,7 @@ if (MODE === "code") {
   check("execute declares pagespeed proxy", execDesc.includes("declare const pagespeed"));
   check("execute omits unconfigured gsc proxy", !execDesc.includes("declare const gsc"));
 } else {
-  check("raw mode lists pagespeed tools directly", names.includes("pagespeed_run") && names.includes("pagespeed_crux_record"), names.join(","));
+  check("raw mode lists pagespeed tools directly", names.includes("pagespeed_run") && !names.includes("pagespeed_crux_record"), names.join(","));
   check("raw mode omits unconfigured gsc tools", !names.includes("gsc_list_sites"));
 }
 
@@ -130,6 +133,25 @@ check("feedback returns receipt", feedback.res.status === 200 && String(feedback
 
 const metrics = await api("/api/metrics");
 check("metrics recorded mcp calls", (metrics.data.tools || []).length >= 1, JSON.stringify(metrics.data.tools || []).slice(0, 120));
+
+// Exercise the scoped endpoint through D1 and the real sandbox without calling a provider.
+const limited = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name: "probe-scoped", grants: { bing: ["https://example.com/"] } }) });
+check("scoped token created", limited.res.ok && Boolean(limited.data.token));
+async function limitedCall(method, params) {
+  const res = await fetch(BASE + "/mcp/token", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${limited.data.token}` },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  return { status: res.status, body: await res.json() };
+}
+const catalog = await limitedCall("tools/list", {});
+check("scoped declarations omit PageSpeed", catalog.status === 200 && !JSON.stringify(catalog.body.result).includes("declare const pagespeed"));
+const restricted = await limitedCall("tools/call", { name: "execute", arguments: { code: "return await pagespeed.run({url: 'https://example.com/'});" } });
+check("scope enforced in sandbox", restricted.body.result?.isError === true && restricted.body.result.content[0].text.includes("unconfigured"));
+await api("/api/tokens/" + limited.data.record.id, { method: "DELETE" });
+check("revocation takes effect", (await limitedCall("tools/list", {})).status === 401);
+await api("/api/tokens/" + created.data.record.id, { method: "DELETE" });
 
 console.log(failures ? `\n${failures} FAILURES` : "\nALL PROBES PASSED");
 process.exit(failures ? 1 : 0);

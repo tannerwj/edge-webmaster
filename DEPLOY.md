@@ -1,42 +1,55 @@
-# Deploying Edge Webmaster
+# Deploy Edge Webmaster
 
-## 1. Create resources
+## Install in your own Cloudflare account
 
-```bash
-npx wrangler d1 create edge-webmaster
-# put the returned database_id into wrangler.jsonc (replace the all-zero placeholder)
-npx wrangler d1 migrations apply edge-webmaster --remote
-npx wrangler secret put DEPLOYMENT_SECRET   # 32 random bytes; wraps stored credentials
-npx wrangler secret put SETUP_TOKEN         # long random token; bootstrap access to setup
-npm run deploy
-```
+1. Use a Workers Paid account for the Dynamic Worker loader used by code mode. Cloudflare meters dynamic workers, requests and CPU time. [Pricing](https://developers.cloudflare.com/dynamic-workers/pricing/)
+2. Click **Deploy to Cloudflare** in the README. Choose your own repository, Worker name and D1 database. Keep the build and deploy commands set to `npm run build` and `npm run deploy`. The button provisions D1 and the deploy command applies the schema through the `DB` binding. [Deploy button documentation](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
+3. Generate two independent random 32-byte secrets in your password manager. Supply `DEPLOYMENT_SECRET` to encrypt provider credentials and `SETUP_TOKEN` to unlock the dashboard. Keep the encryption secret stable across releases. If your deployment did not prompt for them, set both under Worker settings → Variables and Secrets as secrets.
+4. Open the new Worker URL, enter your setup token and choose a connector. PageSpeed can run a lab report on a public page immediately. Search Console and GA4 share a Google sign-in. Bing uses its own key. Test a connection to see which properties it can reach.
 
-The Deploy-to-Cloudflare button creates the Worker; you still create the D1
-database, apply migrations, and set the two secrets as above.
+For manual installation, run `npm ci`, create a D1 database with `npx wrangler d1 create edge-webmaster`, and copy its ID into the top-level `DB` binding in your clone. Run `npm run build`, `npx wrangler deploy --dry-run`, then `npm run deploy`. Supply the two secrets with `npx wrangler secret put NAME`. The dashboard requires authentication even during first setup.
 
-Optionally set `PUBLIC_URL` in `wrangler.jsonc` vars to your canonical origin
-(custom domain) so Google OAuth redirect URIs stay stable, and set
-`MCP_MODE=raw` if you prefer the classic tool catalog over code mode.
+## Give an agent access
 
-## 2. Protect setup with Cloudflare Access
+**Scoped token.** In **Agent access**, choose a name and read or write access. For a personal assistant, leave **All connectors and properties** selected. For a project, choose the connectors and optionally enter exact property identifiers from that provider. Use the full Search Console property (including `sc-domain:` or the URL prefix), the verified Bing URL, or a numeric GA4 property ID. PageSpeed tests public URLs and supports connector-level selection. Property-limited tokens see their assigned identifiers in tool descriptions. Account-wide discovery operations are hidden for those connectors. Copy the token once and configure the client with the endpoint and header shown.
 
-The setup UI can connect accounts and mint agent tokens, so protect it:
+### Browser sign-in with managed OAuth
 
-1. In Cloudflare Zero Trust, create an Access application for your worker's
-   hostname covering `/` and `/api/*` — but **not** `/mcp`.
-2. Add your identity provider (for example Edge IDP / Johnson ID as a generic
-   OIDC IdP, Google, or GitHub) and an allow policy for yourself.
-3. Create a second Access application for `/mcp` with a **Bypass** policy
-   (Everyone). Agent traffic authenticates with its per-deployment API token
-   instead — this is the same split used for the Tesla Fleet app's `/mcp` and
-   `/api/*` routes: Access gates humans, tokens gate agents.
-4. The app detects the `Cf-Access-Authenticated-User-Email` header and treats
-   Access-authenticated visitors as setup admins. The `SETUP_TOKEN` login
-   remains as a bootstrap/break-glass path; if neither Access nor a
-   `SETUP_TOKEN` is present, setup runs in open bootstrap mode and the UI
-   shows a warning banner until you fix that.
+The deploy button installs the Worker and database in your account. Open **Agent access** on your installation for the interactive checklist. Set up Access once for each hostname. You need a Cloudflare Zero Trust team, an allowed login method and a domain you control in the account.
 
-## 3. Connect Google
+1. **Attach your hostname.** In Workers & Pages → your Worker → Settings → Domains & Routes, add a Custom Domain, such as `webmaster.example.com`. Open the dashboard there. Use that origin for provider OAuth callbacks too.
+2. **Protect the dashboard.** In Zero Trust → Access controls → Applications → Add an application → Self-hosted, add the entire hostname. Select your identity provider and an **Allow** policy limited to administrator emails or a trusted admin group. Save its Application Audience (AUD) Tag.
+3. **Protect the agent endpoint.** Add a second self-hosted app on the same hostname with path `/mcp`. Use an **Allow** policy for your trusted report readers. These identities can read all connected properties. In **Advanced settings**, enable **Managed OAuth** and **Dynamic Client Registration**. Desktop clients using ephemeral local callbacks need the localhost and loopback options. For a hosted client, enter its documented redirect URI under Allowed redirect URIs. Save and copy the agent app’s own AUD. [Cloudflare managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+4. **Bind the Worker to your Access apps.** Under Worker Settings → Variables and Secrets add these text variables and deploy. Later deploys preserve dashboard-managed variables.
+
+   | Variable | Value from your account |
+   | --- | --- |
+   | `PUBLIC_URL` | HTTPS origin of your custom hostname |
+   | `ACCESS_TEAM_DOMAIN` | HTTPS origin of your Zero Trust team, such as `https://your-team.cloudflareaccess.com` |
+   | `ACCESS_ADMIN_AUD` | Dashboard application's AUD |
+   | `ACCESS_MCP_AUD` | Agent application's AUD (must differ from the dashboard AUD) |
+
+5. **Check and connect.** Reload **Agent access** on the custom domain. **Check Access discovery** sends a signed-out MCP request and follows the challenge to its public resource metadata. Add the displayed `https://<your-host>/mcp` to an OAuth-capable remote HTTP MCP client. Sign in and approve it. In code mode the agent sees `search_tools` and `execute`.
+6. **Run a real report.** In **Site reports**, choose **Mobile page speed**, enter your public homepage and click **Run report**. If Google’s anonymous quota is exhausted, connect a PageSpeed API key. Click **Copy task for agent**, paste it into the connected agent, and confirm it returns a mobile score for the same URL. Separate Lighthouse runs can give slightly different scores.
+7. **Limit other entry points.** Once the custom hostname works, disable other Worker hostnames if every request should pass through Access. Reflect that choice in your clone’s Wrangler configuration (`workers_dev: false` and `preview_urls: false`) and retain your custom domain route on redeploy. For Google branding pages see **Connect Google** below.
+
+**Scoped bearer clients on the same hostname.** Create a separate self-hosted Access app for the more specific path `/mcp/token` and give just that app a Bypass policy for Everyone. The Worker authenticates issued tokens on that route. Set the client URL to `https://<your-host>/mcp/token` with its bearer header. Keep the hostname-wide dashboard app and the `/mcp` OAuth app on their restricted Allow policies.
+
+| Symptom | What to check |
+| --- | --- |
+| Discovery redirects to browser login or reports no Access challenge | Confirm the agent app matches the custom hostname and `/mcp`, has an Allow policy and has Managed OAuth enabled. |
+| Google works in the dashboard but the agent gets `invalid_target` | Check Managed OAuth on the **agent** Access app and the exact MCP resource URL. |
+| Client registration or redirect rejected | Enable dynamic registration and allow the callback used by that client. |
+| Origin rejects the request after successful sign-in | Check the HTTPS team origin, distinct AUD values and allowed identity. |
+| Scoped token client opens a login page | Check the separate path-specific app and the client’s `/mcp/token` URL. |
+
+**Rollback.** To stop browser-based agent access, disable Managed OAuth on the agent app and remove `ACCESS_MCP_AUD` from the Worker. Keep the restricted Access policy in place. Remove the token-path exception if you also want to stop external bearer clients. Use the dashboard’s setup token if you need to correct Worker audience variables after signing in through Access.
+
+## Connect PageSpeed Insights and CrUX
+
+PageSpeed lab reports can run without a key. For CrUX field data and history, enable **PageSpeed Insights API** and **Chrome UX Report API** in the same Google Cloud project. Open each API’s Library page and click Enable (Manage means it is already enabled). If an API is missing from the restriction picker, confirm it is enabled in the project that owns the key, then reload Credentials. In Credentials, create a dedicated API key. Set **Application restrictions → None** for the standard server-side Worker. Set **API restrictions → Restrict key** and select only those two APIs. Save the key in Connections → PageSpeed Insights + CrUX. **Test connection** checks CrUX. Run a PageSpeed lab report to check the other API. OAuth publishing status has no bearing on this key.
+
+## Connect Google
 
 Use the setup wizard's Google card. You need your **own** Google Cloud
 project — there is no shared OAuth client, by design. Pick one of two
@@ -57,14 +70,23 @@ grants. Follow the wizard's seven steps:
    app name, your user support email, and a developer contact email. At
    Audience choose **External** — Internal only appears for Google Workspace
    organizations, and only accounts inside that organization can use it, so
-   personal Google accounts cannot pick it. Then either:
-   - **Publish app** so the app is In production (recommended for your own
-     long-lived connection). No verification submission is needed for
-     personal use; Google shows a one-time "unverified app" warning when
-     you connect — choose Advanced → proceed.
-   - Or stay in Testing and add your own email under Test users. Warning:
-     in Testing, Google expires refresh tokens after 7 days, so the
-     connection will need re-connecting weekly.
+   personal Google accounts use External.
+   - **Test immediately.** Leave Audience in Testing and add your account to Test users.
+     For the Search Console and Analytics scopes, Testing refresh tokens normally expire after seven days.
+   - **Prepare to publish.** In [Branding](https://console.cloud.google.com/auth/branding),
+     enter your authorized domain. Use your deployment’s HTTPS origin plus `/about` for
+     Application home page, `/about/privacy` for Privacy policy and optionally
+     `/about/terms` for Terms of service. A logo is optional. Each self-host uses its own
+     OAuth project, domain and support address. Review the published wording against your
+     actual data practices, including any agent providers you authorize.
+   - If Cloudflare Access covers the hostname, add a more specific self-hosted Access
+     application for the three information paths, with a public Bypass policy. Open all
+     three signed out and confirm the dashboard still requires sign-in. To roll back
+     public access, remove that path-specific application.
+   - Save Branding, then return to Audience → Publish app. For verification, verify
+     ownership of the domain in Search Console using a project owner or editor account.
+     Check Verification Center for any required brand or scope review.
+     [Google’s branding requirements](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification)
 4. Create the OAuth client at <https://console.cloud.google.com/auth/clients>:
    Create client → Web application; under Authorized redirect URIs click
    Add URI and paste the redirect URI the wizard displays
@@ -82,50 +104,8 @@ in your Google Cloud project, download its JSON key, paste it into the
 wizard, and add the service account email as a user on each Search Console
 property and GA4 property it should read.
 
-## 4. Issue agent tokens and connect clients
+## Updates and rollback
 
-In the wizard: create a token (read = query only; write = also
-`sitemap submit`). Clients connect to `POST /mcp` with
-`Authorization: Bearer ew_…`. The wizard shows copy-paste snippets for Muse
-(custom connector), Claude Code (`claude mcp add --transport http …`), and
-generic MCP JSON configs.
+The top-level configuration belongs to new installations. The named `staging` and `production` environments retain the maintainer deployment bindings. For those environments, apply migrations with `npx wrangler d1 migrations apply DB --env staging --remote` (or `--env production`) before deploying with the corresponding npm script. Configure Access variables on the right environment before upgrading. Existing tokens keep their original access.
 
-## Staging
-
-Releases are verified live on staging before they reach production.
-
-- Worker: `edge-webmaster-staging` (the `staging` env in
-  `wrangler.jsonc`), hostname `https://webmaster-staging.tannerwj.dev`.
-- Staging has its **own D1 database** (`edge-webmaster-staging`) — it
-  never touches production data. Create it once, put the returned id in
-  the staging env's `database_id` in `wrangler.jsonc` (replacing the
-  all-zero placeholder), and apply migrations:
-
-  ```bash
-  npx wrangler d1 create edge-webmaster-staging
-  npx wrangler d1 migrations apply edge-webmaster-staging --env staging --remote
-  ```
-
-- Staging needs its own secrets (separate values from production):
-
-  ```bash
-  npx wrangler secret put DEPLOYMENT_SECRET --env staging
-  npx wrangler secret put SETUP_TOKEN --env staging
-  ```
-
-- Deploy with `npm run deploy:staging` (`npm run deploy:prod` targets
-  production; plain `npm run deploy` is the same as prod).
-
-There is deliberately **no Cloudflare Access application on the staging
-hostname**: the `SETUP_TOKEN` login gates setup instead, so staging can
-be exercised end to end — including the setup-token path that Access
-would otherwise hide — before the same build is promoted to production.
-
-## Updating
-
-Pull `master`, `npm install`, then ship staging first: apply any new D1
-migrations (`npx wrangler d1 migrations apply edge-webmaster-staging
---env staging --remote`), `npm run deploy:staging`, and verify the
-release live on the staging hostname. Once staging checks out, apply
-the migrations to production (`npx wrangler d1 migrations apply
-edge-webmaster --remote`) and `npm run deploy:prod`.
+Keep a working setup token and the previous Worker version ID before changing Access. Verify login, a read-only MCP call, and tool discovery on staging. If a release fails, roll the Worker back in Deployments, restore the prior Access policies and keep the encryption secret. The grants migration adds a nullable column and is compatible with the previous Worker. Revoke restricted tokens before rolling back to a version that does not enforce grants.

@@ -6,3 +6,4 @@ dist/
 *.log
 web/dist/
 web/node_modules/
+!.dev.vars.example

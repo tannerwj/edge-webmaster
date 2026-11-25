@@ -1,5 +1,5 @@
 import { fmtDate, type StatusBody } from "../api";
-import { Link, navigate } from "../components/nav";
+import { Link } from "../components/nav";
 import { StatusPill } from "../components/StatusPill";
 
 /** Map a backend next-step action_target to a path: "tokens" or a connector id. */
@@ -14,6 +14,11 @@ export function Dashboard({ status }: { status: StatusBody }) {
   const step = s.recommended_next_step;
   return (
     <div>
+      <h1>Workspace overview</h1>
+      {step && <section className="next-step">
+        <div><h2>{step.title}</h2><p>{step.body}</p></div>
+        <Link className="btn-link" href={targetPath(step.action_target)}>Open setup →</Link>
+      </section>}
       <div className="tiles">
         <div className="tile">
           <div className="tile-num">{s.connections_active}/{s.connections_total}</div>
@@ -35,17 +40,6 @@ export function Dashboard({ status }: { status: StatusBody }) {
         </div>
       </div>
 
-      {step && (
-        <div className="card card-accent">
-          <h3>Recommended next step</h3>
-          <p className="card-title">{step.title}</p>
-          <p className="muted">{step.body}</p>
-          <button type="button" onClick={() => navigate(targetPath(step.action_target))}>
-            Do it now
-          </button>
-        </div>
-      )}
-
       {s.latest_audit && (
         <p className="small muted">
           Latest activity: {fmtDate(s.latest_audit.ts)} — {s.latest_audit.actor} · {s.latest_audit.action}
@@ -53,11 +47,11 @@ export function Dashboard({ status }: { status: StatusBody }) {
         </p>
       )}
 
-      <h2>Connectors</h2>
+      <div className="section-title"><h2>Webmaster tools</h2><Link href="/reports">Run a site report →</Link></div>
       <div className="card">
         {status.connectors.map((c) => (
           <Link key={c.id} className="mini-row" href={`/connections/${c.id}`}>
-            <span className="mini-name">{c.name}</span>
+            <span><strong className="mini-name">{c.name}</strong><small className="tool-description">{c.description}</small></span>
             <StatusPill status={c.status} />
           </Link>
         ))}

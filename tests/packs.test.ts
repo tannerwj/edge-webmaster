@@ -1,3 +1,4 @@
+import { grantTools } from "../src/grants";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { putCredential } from "../src/creds";
 import { bingPack } from "../src/packs/bing";
@@ -83,7 +84,11 @@ describe("gsc pack against a mocked Google upstream", () => {
     expect(health.count).toBe(1);
     expect(health.detail).toBe("1 properties visible");
     expect(health.items).toEqual(["sc-domain:example.com"]);
-    const analytics = (await tool(gscPack, "gsc_query_search_analytics").handler(ctxFor(env), {
+    const granted = grantTools(gscPack.tools, { gsc: ["sc-domain:example.com"] });
+    expect(granted.some((t) => t.name === "gsc_list_sites")).toBe(false);
+    const query = granted.find((t) => t.name === "gsc_query_search_analytics")!;
+    expect(() => query.handler(ctxFor(env), { site_url: "sc-domain:other.example" })).toThrow("access to that property");
+    const analytics = (await query.handler(ctxFor(env), {
       site_url: "sc-domain:example.com",
       dimensions: ["query"],
       row_limit: 10,
@@ -95,7 +100,7 @@ describe("gsc pack against a mocked Google upstream", () => {
 
   it("is not configured without any Google credential", async () => {
     const env = makeEnv(new FakeD1());
-    expect(await gscPack.configured(env)).toBe(false);
+    expect(await gscPack.credentialsPresent(env)).toBe(false);
   });
 });
 
@@ -183,7 +188,7 @@ describe("pagespeed pack against a mocked Google upstream", () => {
     await putCredential(env, "pagespeed", { api_key: "ps-key-123" });
     const seen: { url: string; body: string }[] = [];
     vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
-      seen.push({ url: String(url), body: String(init.body ?? "") });
+      seen.push({ url: String(url), body: typeof init.body === "string" ? init.body : "" });
       return jsonResponse({ record: { key: { origin: "https://www.google.com" }, metrics: {} } });
     });
     const health = await pagespeedPack.health(env);
@@ -194,9 +199,12 @@ describe("pagespeed pack against a mocked Google upstream", () => {
     expect(JSON.parse(seen[0]?.body ?? "{}").origin).toBe("https://www.google.com");
   });
 
-  it("health without a saved key reaches CrUX but does not claim a key was verified", async () => {
+  it("health without a saved key reaches PageSpeed but does not claim a key was verified", async () => {
     const env = makeEnv(new FakeD1());
-    vi.stubGlobal("fetch", async () => jsonResponse({ record: { key: {}, metrics: {} } }));
+    vi.stubGlobal("fetch", async (url: string) => {
+      expect(url).toContain("pagespeedonline");
+      return jsonResponse({ lighthouseResult: {} });
+    });
     const health = await pagespeedPack.health(env);
     expect(health.ok).toBe(true);
     expect(health.detail).not.toContain("key verified");

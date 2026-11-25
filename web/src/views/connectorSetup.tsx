@@ -94,7 +94,7 @@ export function GoogleSetup({
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ redirect_uri?: string }>("/api/google/oauth-url").then(({ res, data }) => {
+    void api<{ redirect_uri?: string }>("/api/google/oauth-url?preview=1").then(({ res, data }) => {
       if (cancelled) return;
       setRedirectUri(res.ok && data.redirect_uri ? data.redirect_uri : `${location.origin}/auth/google/callback`);
     });
@@ -122,6 +122,7 @@ export function GoogleSetup({
     setSaving(false);
     if (res.ok) {
       setReplaceSa(false);
+      setSaJson("");
       setResult("Service account saved. Give it access (step 6), then test.");
       refresh();
     } else {
@@ -165,6 +166,7 @@ export function GoogleSetup({
     setClearing(false);
     if (res.ok) {
       setReplaceSa(false);
+      setSaJson("");
       setResult("Service account cleared.");
       refresh();
     } else {
@@ -250,7 +252,8 @@ export function GoogleSetup({
       title: "Set up the OAuth consent screen",
       instruction: "Configure who can sign in and how the app appears to Google:",
       links: [
-        { label: "Open OAuth consent screen (Audience)", href: "https://console.cloud.google.com/auth/audience" },
+        { label: "Open Branding", href: "https://console.cloud.google.com/auth/branding" },
+        { label: "Open Audience", href: "https://console.cloud.google.com/auth/audience" },
         { label: "Open OAuth overview (first-time setup)", href: "https://console.cloud.google.com/auth/overview" },
       ],
       content: (
@@ -262,13 +265,19 @@ export function GoogleSetup({
             accounts inside that organization can use it — personal Google accounts need External.
           </li>
           <li>
-            Recommended: click Publish app so the app is In production. This is the setting for a long-lived
-            connection for your own sites; no verification submission is needed for personal use. When you
-            connect, Google shows a one-time “unverified app” warning — choose Advanced → proceed.
+            To test now, add your Google account under Audience → Test users. For these scopes, Testing
+            refresh tokens normally expire after seven days.
           </li>
           <li>
-            Or stay in Testing and add your own email under Test users. Warning: in Testing, Google expires
-            refresh tokens after 7 days, so the connection will need re-connecting weekly.
+            Before publishing, complete Branding. Enter your authorized domain and these public URLs.
+            Open each while signed out to check that Google can read it.
+            <ul>{[["Application home page", "/about"], ["Privacy policy", "/about/privacy"], ["Terms of service (optional)", "/about/terms"]].map(([label, path]) => (
+              <li key={path}>{label}: <a href={path} target="_blank" rel="noreferrer">{location.origin}{path}</a></li>
+            ))}</ul>
+          </li>
+          <li>
+            A logo is optional. Save Branding, return to Audience and use Publish app when ready.
+            Check Verification Center for any review Google requires for your audience and scopes.
           </li>
         </ul>
       ),
@@ -386,12 +395,12 @@ export function GoogleSetup({
       {method === "oauth" ? (
         <div>
           {oauthPanel}
-          <StepList steps={oauthSteps} />
+          <StepList key="oauth" steps={oauthSteps} />
         </div>
       ) : (
         <div>
           {saPanel}
-          <StepList steps={saSteps} />
+          <StepList key="sa" steps={saSteps} />
         </div>
       )}
       <ResultLine result={result} />
@@ -424,7 +433,7 @@ function FieldSteps({
     });
     setSaving(false);
     setResult(res.ok ? "Saved. Now test the connection." : errText(data, "Save failed."));
-    if (res.ok) refresh();
+    if (res.ok) { setValues({}); refresh(); }
   };
 
   const fieldContent: ReactNode = (
@@ -443,7 +452,7 @@ function FieldSteps({
         </div>
       ))}
       <div className="row">
-        <button type="button" onClick={() => void save()} disabled={saving}>Save</button>
+        <button type="button" onClick={() => void save()} disabled={saving || !c.setup_fields.every((f) => values[f.key]?.trim())}>Save</button>
       </div>
     </div>
   );
@@ -496,8 +505,7 @@ export function PageSpeedSetup({ c, refresh, onTest }: { c: Connector; refresh: 
   return (
     <div>
       <p className="muted">
-        No setup needed — PageSpeed and CrUX already work. Adding a Google API key only raises the
-        quota. Optional steps:
+        You can run a PageSpeed lab report now. Add a key for real-user metrics and history. This key works independently of Google OAuth.
       </p>
       <FieldSteps
         c={c}
@@ -506,8 +514,16 @@ export function PageSpeedSetup({ c, refresh, onTest }: { c: Connector; refresh: 
         successHint="Success confirms the key is accepted by CrUX."
         stepsBefore={[
           {
-            title: "Create an API key",
-            instruction: "Click Create credentials → API key, then copy the key.",
+            title: "Enable both APIs",
+            instruction: "Open each link, select the project where you will create the key, and click Enable. If you see Manage, the API is already enabled. If either API is missing from the key restriction list, return here, enable it, then reload the key editor.",
+            links: [
+              { label: "PageSpeed Insights API", href: "https://console.cloud.google.com/apis/library/pagespeedonline.googleapis.com" },
+              { label: "Chrome UX Report API", href: "https://console.cloud.google.com/apis/library/chromeuxreport.googleapis.com" },
+            ],
+          },
+          {
+            title: "Create and restrict the key",
+            instruction: "Choose Create credentials → API key. Under Application restrictions, select None for a standard Cloudflare Worker, which calls Google server-side. Under API restrictions, select Restrict key and choose only PageSpeed Insights API and Chrome UX Report API. Save and copy the key.",
             links: [{ label: "Open credentials", href: "https://console.cloud.google.com/apis/credentials" }],
           },
         ]}

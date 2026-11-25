@@ -42,7 +42,7 @@ export interface Connector {
   status_detail: string;
   credentials_present: boolean;
   configured: boolean;
-  health: { ok: boolean; detail: string; count?: number | null } | null;
+  health: { items?: string[]; propertyIds?: string[]; ok: boolean; detail: string; count?: number | null } | null;
   google_connection?: GoogleConnection | null;
   setup_fields: SetupField[];
   tools: string[];
@@ -64,6 +64,7 @@ export interface NextStep {
 
 export interface StatusBody {
   mode: string;
+  managed_oauth?: boolean;
   bootstrap_open: boolean;
   summary: {
     connections_active: number;
@@ -83,6 +84,7 @@ export interface AgentToken {
   name: string;
   scope: string;
   created_at: number;
+  grants?: Record<string, string[]> | null;
 }
 
 export interface Metrics {
@@ -92,9 +94,19 @@ export interface Metrics {
 }
 
 export async function api<T>(path: string, opts: RequestInit = {}): Promise<{ res: Response; data: T }> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
-  const data = (await res.json().catch(() => ({}))) as T;
-  return { res, data };
+  let res: Response;
+  try {
+    res = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
+  } catch {
+    res = Response.json({ error: "Could not reach the Worker. Check your connection and retry." }, { status: 503 });
+  }
+  let data: unknown;
+  try { data = await res.json(); }
+  catch {
+    res = Response.json({ error: "The Worker returned an unreadable response. Refresh and sign in again." }, { status: 502 });
+    data = await res.json();
+  }
+  return { res, data: data as T };
 }
 
 export function fmtDate(ts: number): string {

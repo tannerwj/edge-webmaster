@@ -1,13 +1,14 @@
+import { AccessSetup } from "../components/AccessSetup";
+import { TokenGrants, type Selections } from "../components/TokenGrants";
 import { useCallback, useEffect, useState } from "react";
-import { api, errText, fmtDate, type AgentToken } from "../api";
+import { api, errText, fmtDate, type AgentToken, type Connector } from "../api";
 import { CopyButton } from "../components/CopyButton";
-import { CLIENTS, downloadSetupMarkdown, setupSnippet, type AgentClient } from "./agentSetup";
+import { CLIENTS, setupSnippet, type AgentClient } from "./agentSetup";
 
 function AgentSetupPanel({ freshToken }: { freshToken: string | null }) {
   const [client, setClient] = useState<AgentClient>("claude-code");
   const [source, setSource] = useState<"fresh" | "paste">("paste");
   const [pasted, setPasted] = useState("");
-  const [copied, setCopied] = useState(false);
   const origin = location.origin;
 
   useEffect(() => {
@@ -18,17 +19,11 @@ function AgentSetupPanel({ freshToken }: { freshToken: string | null }) {
   const effective = token || "<YOUR_TOKEN>";
   const snippet = setupSnippet(client, origin, effective);
 
-  const copySnippet = async () => {
-    await navigator.clipboard.writeText(snippet).catch(() => undefined);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-
   return (
     <section className="card card-accent">
       <h3>Set up your agent</h3>
       {freshToken && source === "fresh" && (
-        <p className="result result-ok">New token shown once — copy or download the setup now.</p>
+        <p className="result result-ok">New token shown once — copy the token now.</p>
       )}
       <div className="setup-controls">
         <div>
@@ -53,23 +48,21 @@ function AgentSetupPanel({ freshToken }: { freshToken: string | null }) {
         <div>
           <label htmlFor="agent-token-paste">Your token</label>
           <input
-            id="agent-token-paste"
+            id="agent-token-paste" type="password"
             autoComplete="off"
             placeholder="Paste a token you saved when you created it"
             value={pasted}
             onChange={(e) => setPasted(e.target.value)}
           />
-          <p className="small muted">Stored tokens can't be shown again — paste one you saved, or create a new one below.</p>
+          <p className="small muted">Stored tokens can't be shown again — paste one you saved, or create a new one above.</p>
         </div>
       )}
       <div className="row">
-        <button type="button" onClick={() => void copySnippet()}>{copied ? "Copied" : "Copy setup snippet"}</button>
-        <button type="button" className="ghost" onClick={() => downloadSetupMarkdown(origin, token || null)}>
-          Download setup Markdown
-        </button>
+        <CopyButton value={snippet} label="Copy setup snippet" />
+        <a download="edge-webmaster-agent-setup.md" href="/setup-agent.md?auth=token">Download agent guide</a>
       </div>
       <p className="small muted">
-        Or fetch the server copy: <a href="/setup-agent.md">/setup-agent.md</a>
+        Or fetch the server copy: <a href="/setup-agent.md?auth=token">token setup instructions</a>
       </p>
       <details>
         <summary>Preview snippet</summary>
@@ -80,16 +73,18 @@ function AgentSetupPanel({ freshToken }: { freshToken: string | null }) {
   );
 }
 
-export function Tokens() {
+export function Tokens({ managedOAuth, connectors }: { managedOAuth: boolean; connectors: Connector[] }) {
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [name, setName] = useState("");
+  const [selected, setSelected] = useState<Selections | null>(null);
   const [scope, setScope] = useState("read");
   const [rawToken, setRawToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await api<{ tokens?: AgentToken[] }>("/api/tokens");
-    setTokens(data.tokens ?? []);
+    const { res, data } = await api<{ tokens?: AgentToken[] }>("/api/tokens");
+    if (res.ok) setTokens(data.tokens ?? []);
+    else setError(errText(data, "Could not load tokens."));
   }, []);
 
   useEffect(() => {
@@ -99,7 +94,7 @@ export function Tokens() {
   const create = async () => {
     const { res, data } = await api<{ token?: string; error?: string }>("/api/tokens", {
       method: "POST",
-      body: JSON.stringify({ name, scope }),
+      body: JSON.stringify({ name, scope, grants: selected && Object.fromEntries(Object.entries(selected).map(([ns, text]) => [ns, text.split(/\n/).map((s) => s.trim()).filter(Boolean)])) }),
     });
     if (res.ok && data.token) {
       setRawToken(data.token);
@@ -113,19 +108,22 @@ export function Tokens() {
   };
 
   const revoke = async (id: string) => {
-    await api(`/api/tokens/${id}`, { method: "DELETE" });
-    void load();
+    const { res, data } = await api(`/api/tokens/${id}`, { method: "DELETE" });
+    if (res.ok) { setRawToken(null); void load(); }
+    else setError(errText(data, "Could not revoke this token."));
   };
 
   return (
     <div>
-      <AgentSetupPanel freshToken={rawToken} />
+      <h1>Agent access</h1>
+      <AccessSetup configured={managedOAuth} />
       <div className="card">
         <h3>Agent tokens</h3>
         <p className="muted">
           Tokens authenticate MCP clients. Read tokens can query; write tokens can also submit
           sitemaps. The raw token is shown once, at creation.
         </p>
+        <TokenGrants connectors={connectors} selected={selected} change={setSelected} />
         <div className="row token-create">
           <input
             placeholder="Token name, e.g. claude-code-laptop"
@@ -137,7 +135,7 @@ export function Tokens() {
             <option value="read">read</option>
             <option value="write">write</option>
           </select>
-          <button type="button" onClick={() => void create()}>Create token</button>
+          <button type="button" disabled={selected !== null && !Object.keys(selected).length} onClick={() => void create()}>Create token</button>
         </div>
         {error && <div className="result result-bad">{error}</div>}
         {rawToken && (
@@ -158,7 +156,7 @@ export function Tokens() {
               {tokens.map((t) => (
                 <tr key={t.id}>
                   <td>{t.name}</td>
-                  <td>{t.scope}</td>
+                  <td>{t.scope}<small className="tool-description">{t.grants ? Object.entries(t.grants).map(([ns, sites]) => ns + " · " + (sites.join(", ") || "all properties")).join(" / ") : "All connectors"}</small></td>
                   <td className="muted">{fmtDate(t.created_at)}</td>
                   <td>
                     <button type="button" className="danger" onClick={() => void revoke(t.id)}>Revoke</button>
@@ -171,6 +169,7 @@ export function Tokens() {
           <p className="muted">No tokens yet. Create one above.</p>
         )}
       </div>
+      <AgentSetupPanel freshToken={rawToken} />
     </div>
   );
 }

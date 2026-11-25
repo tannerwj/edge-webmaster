@@ -7,7 +7,7 @@ interface PsCred {
 }
 
 async function keyParam(env: Parameters<typeof getCredential>[0]): Promise<string> {
-  const cred = await getCredential<PsCred>(env as never, "pagespeed");
+  const cred = await getCredential<PsCred>(env, "pagespeed");
   return cred?.api_key ? `&key=${encodeURIComponent(cred.api_key)}` : "";
 }
 
@@ -79,8 +79,11 @@ async function crux(env: Parameters<typeof getCredential>[0], method: string, ar
 const CRUX_PROBE_ORIGIN = "https://www.google.com";
 
 async function pagespeedHealth(env: Parameters<typeof getCredential>[0]) {
-  const cred = await getCredential<PsCred>(env as never, "pagespeed");
-  const hasKey = Boolean(cred?.api_key);
+  const cred = await getCredential<PsCred>(env, "pagespeed");
+  if (!cred?.api_key) {
+    await runOnce(env, CRUX_PROBE_ORIGIN, "mobile");
+    return { ok: true, detail: "PageSpeed responded with no API key saved. Add a key for CrUX.", count: null };
+  }
   const { status, ok, data } = await cruxFetch(env, "queryRecord", { origin: CRUX_PROBE_ORIGIN });
   // CrUX answers a query for an origin with no field data as 404 NOT_FOUND.
   // Reaching that answer still proves the request was authenticated and the
@@ -89,18 +92,14 @@ async function pagespeedHealth(env: Parameters<typeof getCredential>[0]) {
   if (ok || notFound) {
     return {
       ok: true,
-      detail: hasKey
-        ? "Optional API key verified against CrUX"
-        : "Public CrUX API reachable; no API key saved to verify.",
+      detail: "Optional API key verified against CrUX",
       count: null,
     };
   }
   const message = cruxError(data).message || "request failed";
   return {
     ok: false,
-    detail: hasKey
-      ? `Optional API key not verified: CrUX ${status}: ${message}`
-      : `No API key saved; public CrUX check failed: CrUX ${status}: ${message}`,
+    detail: `Optional API key not verified: CrUX ${status}: ${message}`,
     count: null,
   };
 }
@@ -110,7 +109,7 @@ export const pagespeedPack: ConnectorPack = {
   name: "PageSpeed Insights + CrUX",
   namespace: "pagespeed",
   authType: "optional-key",
-  blurb: "Lab performance scores and real-user field data. Works without a key; a key raises quotas.",
+  blurb: "Run a lab performance test for any public URL. Add a Google API key for real-user metrics and history.",
   provider: "Google",
   connectionId: "pagespeed",
   setupKind: "no-setup-optional-key",
@@ -121,14 +120,12 @@ export const pagespeedPack: ConnectorPack = {
     "See real-user CrUX field data for a URL or origin",
     "Compare CrUX history over 12 collection periods",
   ],
-  recommendation: "No setup — already available",
+  recommendation: "PageSpeed is available immediately. CrUX requires an API key.",
   availableWithoutSetup: true,
   setupFields: [
     { key: "api_key", label: "Google API key (optional)", type: "password", help: "Any Google Cloud API key with PageSpeed Insights + Chrome UX Report APIs enabled." },
   ],
   credentialsPresent: async (env) =>
-    Boolean((await getCredential<PsCred>(env, "pagespeed"))?.api_key),
-  configured: async (env) =>
     Boolean((await getCredential<PsCred>(env, "pagespeed"))?.api_key),
   health: pagespeedHealth,
   tools: [
@@ -160,6 +157,7 @@ export const pagespeedPack: ConnectorPack = {
     },
     {
       name: "pagespeed_crux_record",
+      requiresCredential: true,
       namespace: "pagespeed",
       description: "Current Chrome UX Report field data for a url or origin.",
       inputSchema: obj({ url: { type: "string" }, origin: { type: "string" } }),
@@ -168,6 +166,7 @@ export const pagespeedPack: ConnectorPack = {
     },
     {
       name: "pagespeed_crux_history",
+      requiresCredential: true,
       namespace: "pagespeed",
       description: "CrUX history (12 collection periods) for LCP, CLS and INP for a url or origin.",
       inputSchema: obj({ url: { type: "string" }, origin: { type: "string" } }),

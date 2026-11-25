@@ -15,11 +15,9 @@ welcome — especially new connector packs.
 ## Adding a connector pack
 
 1. Create `src/packs/<id>.ts` implementing `ConnectorPack`: id, namespace,
-   auth type, setup fields, `configured`, `health`, and `tools` whose names
+   auth type, setup fields, `credentialsPresent`, `health`, and `tools` whose names
    are `<namespace>_<method>`.
-2. Register it in `src/packs/index.ts`. The registry, `search_tools`, the
-   sandbox proxies, raw mode, and the setup UI pick it up automatically.
-3. Add the namespace to `NAMESPACES` in `src/sandbox.ts` if agents should
-   reach it from `execute`.
+2. Register it in `src/packs/index.ts`. MCP discovery, code-mode proxies and the connection overview use the registered pack.
+3. Wire credential storage and the provider setup form. For optional property grants, explicitly define the provider's identifier and how each operation is scoped before enabling property selection.
 4. Add mocked-upstream tests and a probe assertion that the pack stays hidden
    until configured.

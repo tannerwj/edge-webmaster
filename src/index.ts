@@ -3,6 +3,8 @@ import { handleMcp, VERSION } from "./mcp";
 import type { Env } from "./registry";
 import { UI_HTML } from "./frontend.gen";
 
+import { publicInfo } from "../web/public-info";
+
 export { WebmasterCodeSandbox } from "./sandbox";
 
 const SECURITY_HEADERS = {
@@ -29,8 +31,7 @@ const NON_SPA_PATHS = new Set([
 function isSpaPath(path: string): boolean {
   if (path.startsWith("/api/") || path.startsWith("/mcp")) return false;
   if (NON_SPA_PATHS.has(path)) return false;
-  const last = path.split("/").pop() ?? "";
-  return !/\.[A-Za-z0-9]+$/.test(last);
+  return !/\.[A-Za-z0-9]+$/.test(path);
 }
 
 export default {
@@ -38,7 +39,9 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     let res: Response;
-    if (path === "/mcp" || path === "/mcp/") {
+    if (path === "/about" || path.startsWith("/about/")) {
+      res = publicInfo(path, req.method);
+    } else if (path === "/mcp" || path === "/mcp/" || path === "/mcp/token") {
       res = await handleMcp(req, env, ctx);
     } else if (path === "/auth/google/callback") {
       res = await handleGoogleCallback(req, env);
@@ -52,9 +55,8 @@ export default {
       res = new Response(
         JSON.stringify({
           resource: `${url.origin}/mcp`,
-          authorization_servers: [],
+          authorization_servers: env.ACCESS_MCP_AUD && env.ACCESS_TEAM_DOMAIN ? [url.origin] : [],
           bearer_methods_supported: ["header"],
-          note: "Agent access uses per-deployment API tokens issued in setup. Human setup is gated by Cloudflare Access; see DEPLOY.md.",
         }),
         { headers: { "content-type": "application/json" } },
       );

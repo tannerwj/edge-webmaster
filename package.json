@@ -10,15 +10,16 @@
     "build:frontend": "node scripts/build-frontend.mjs",
     "test": "vitest run",
     "probe": "node tests/e2e/probe.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "check": "abacus check",
     "lint": "oxlint --type-aware",
     "fmt": "abacus fmt",
     "fmt:check": "abacus fmt --check",
     "gates": "abacus check",
-    "deploy": "wrangler deploy",
-    "deploy:prod": "wrangler deploy",
-    "deploy:staging": "wrangler deploy --env staging"
+    "deploy": "wrangler d1 migrations apply DB --remote --env=\"\" && wrangler deploy --env=\"\"",
+    "deploy:prod": "wrangler deploy --env production",
+    "deploy:staging": "wrangler deploy --env staging --keep-vars",
+    "build": "npm run build:frontend"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261006.0",
@@ -39,7 +40,7 @@
         "description": "Random 32-byte secret that wraps stored upstream credentials (AES-GCM) in D1. Set with: wrangler secret put DEPLOYMENT_SECRET"
       },
       "SETUP_TOKEN": {
-        "description": "Bootstrap/admin token for the setup UI when Cloudflare Access is not in front. Set with: wrangler secret put SETUP_TOKEN"
+        "description": "Generate a separate random 32-byte secret. After deployment, unlock the dashboard and open **Agent access** for guided Cloudflare Access setup. [Installation guide](https://github.com/tannerwj/edge-webmaster/blob/master/DEPLOY.md#give-an-agent-access)"
       },
       "DB": {
         "description": "Settings, agent tokens, audit log, MCP call metrics and the response cache. Migrations run with wrangler d1 migrations apply."
@@ -50,6 +51,7 @@
     }
   },
   "dependencies": {
+    "jose": "^6.2.18",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   }

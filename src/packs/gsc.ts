@@ -73,20 +73,20 @@ function totals(rows: unknown[]): { clicks: number; impressions: number; ctr: nu
 async function performanceReview(ctx: ToolCtx, args: Record<string, unknown>) {
   const days = clampInt(args.days, 7, 90, 28);
   const base = { site_url: args.site_url, row_limit: 25 };
+  const currentRange = { start_date: isoDaysAgo(days + 1), end_date: isoDaysAgo(2) };
   const current = await queryAnalytics(ctx, {
     ...base,
-    start_date: isoDaysAgo(days + 2),
-    end_date: isoDaysAgo(2),
+    ...currentRange,
     dimensions: [],
   });
   const previous = await queryAnalytics(ctx, {
     ...base,
-    start_date: isoDaysAgo(days * 2 + 2),
-    end_date: isoDaysAgo(days + 3),
+    start_date: isoDaysAgo(days * 2 + 1),
+    end_date: isoDaysAgo(days + 2),
     dimensions: [],
   });
-  const topQueries = await queryAnalytics(ctx, { ...base, dimensions: ["query"], row_limit: 10 });
-  const topPages = await queryAnalytics(ctx, { ...base, dimensions: ["page"], row_limit: 10 });
+  const topQueries = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["query"], row_limit: 10 });
+  const topPages = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["page"], row_limit: 10 });
   const sitemaps = await googleFetch(
     ctx.env,
     `${API}/sites/${encodeURIComponent(str(args.site_url))}/sitemaps`,
@@ -137,7 +137,6 @@ export const gscPack: ConnectorPack = {
   recommendation: "Start here — this is the core one",
   setupFields: [],
   credentialsPresent: googleConfigured,
-  configured: googleConfigured,
   health: async (env) => {
     const data = await googleFetch(env, `${API}/sites`);
     const entries = Array.isArray(data.siteEntry) ? data.siteEntry : [];

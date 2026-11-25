@@ -1,8 +1,9 @@
+import { accessEmail } from "./access";
 import type { Env } from "./registry";
 import { nowSec, sha256Hex, timingSafeEqual } from "./util";
 
 export type Theme = "light" | "dark" | "system";
-export type IdentityKind = "access" | "setup-token" | "open";
+export type IdentityKind = "access" | "setup-token";
 
 export interface Identity {
   email: string | null;
@@ -26,16 +27,14 @@ export function setupSessionCookie(req: Request): string | null {
 
 export async function hasSetupSession(req: Request, env: Env): Promise<boolean> {
   const value = setupSessionCookie(req);
-  return value !== null && timingSafeEqual(value, await sessionCookieValue(env));
+  return Boolean(env.SETUP_TOKEN) && value !== null && timingSafeEqual(value, await sessionCookieValue(env));
 }
 
-export async function resolveIdentity(req: Request, env: Env): Promise<Identity> {
-  const email = req.headers.get("cf-access-authenticated-user-email");
+export async function resolveIdentity(req: Request, env: Env): Promise<Identity | null> {
+  const email = await accessEmail(req, env, env.ACCESS_ADMIN_AUD);
   if (email) return { email, identity: "access", key: email };
-  if (!env.SETUP_TOKEN) return { email: null, identity: "open", key: "open" };
   if (await hasSetupSession(req, env)) return { email: null, identity: "setup-token", key: "setup-token" };
-  // Unreachable behind the admin gate; an unauthenticated caller never gets here.
-  return { email: null, identity: "open", key: "open" };
+  return null;
 }
 
 export async function getTheme(env: Env, identityKey: string): Promise<Theme> {

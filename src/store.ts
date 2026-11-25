@@ -1,7 +1,9 @@
+import type { Grants } from "./grants";
 import type { Env } from "./registry";
 import { nowSec, randomToken, sha256Hex } from "./util";
 
 export interface AgentToken {
+  grants?: Grants | null;
   id: string;
   name: string;
   scope: "read" | "write";
@@ -11,44 +13,40 @@ export async function createAgentToken(
   env: Env,
   name: string,
   scope: "read" | "write",
+  grants: Grants | null = null,
 ): Promise<{ token: string; record: AgentToken }> {
   const token = randomToken("ew_");
   const id = randomToken("tok_").slice(0, 16);
   await env.DB.prepare(
-    "INSERT INTO agent_tokens (id, name, token_hash, scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+    "INSERT INTO agent_tokens (id, name, token_hash, scope, created_at, grants) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
   )
-    .bind(id, name, await sha256Hex(token), scope, nowSec())
+    .bind(id, name, await sha256Hex(token), scope, nowSec(), JSON.stringify(grants))
     .run();
-  return { token, record: { id, name, scope } };
+  return { token, record: { id, name, scope, grants } };
 }
 
 export async function authenticateAgentToken(env: Env, raw: string): Promise<AgentToken | null> {
   if (!raw.startsWith("ew_")) return null;
-  const row = await env.DB.prepare(
-    "SELECT id, name, scope, expires_at FROM agent_tokens WHERE token_hash = ?1",
-  )
-    .bind(await sha256Hex(raw))
-    .first<{ id: string; name: string; scope: string; expires_at: number | null }>();
-  if (!row) return null;
-  if (row.expires_at && row.expires_at < nowSec()) return null;
-  return { id: row.id, name: row.name, scope: row.scope === "write" ? "write" : "read" };
+  return lookupToken(env, "token_hash", await sha256Hex(raw));
 }
 
-export async function tokenStillActive(env: Env, tokenId: string): Promise<AgentToken | null> {
+export function tokenStillActive(env: Env, tokenId: string): Promise<AgentToken | null> {
+  return lookupToken(env, "id", tokenId);
+}
+
+async function lookupToken(env: Env, column: "id" | "token_hash", value: string): Promise<AgentToken | null> {
   const row = await env.DB.prepare(
-    "SELECT id, name, scope, expires_at FROM agent_tokens WHERE id = ?1",
-  )
-    .bind(tokenId)
-    .first<{ id: string; name: string; scope: string; expires_at: number | null }>();
-  if (!row || (row.expires_at && row.expires_at < nowSec())) return null;
-  return { id: row.id, name: row.name, scope: row.scope === "write" ? "write" : "read" };
+    `SELECT id, name, scope, grants FROM agent_tokens WHERE ${column} = ?1 AND (expires_at IS NULL OR expires_at > ?2)`,
+  ).bind(value, nowSec()).first<{ id: string; name: string; scope: string; grants: string | null }>();
+  if (!row) return null;
+  return { id: row.id, name: row.name, scope: row.scope === "write" ? "write" : "read", grants: JSON.parse(row.grants ?? "null") };
 }
 
 export async function listAgentTokens(env: Env): Promise<Record<string, unknown>[]> {
   const res = await env.DB.prepare(
-    "SELECT id, name, scope, created_at, last_used_at, expires_at FROM agent_tokens ORDER BY created_at DESC",
+    "SELECT id, name, scope, grants, created_at, last_used_at, expires_at FROM agent_tokens ORDER BY created_at DESC",
   ).all<Record<string, unknown>>();
-  return res.results ?? [];
+  return res.results.map((row) => ({ ...row, grants: typeof row.grants === "string" ? JSON.parse(row.grants) : null }));
 }
 
 export async function revokeAgentToken(env: Env, id: string): Promise<void> {
