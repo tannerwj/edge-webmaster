@@ -140,8 +140,12 @@ export const gscPack: ConnectorPack = {
   configured: googleConfigured,
   health: async (env) => {
     const data = await googleFetch(env, `${API}/sites`);
-    const count = Array.isArray(data.siteEntry) ? data.siteEntry.length : 0;
-    return { ok: true, detail: `${count} properties visible`, count };
+    const entries = Array.isArray(data.siteEntry) ? data.siteEntry : [];
+    const items = entries
+      .map((e) => (isRecord(e) ? str(e.siteUrl) : ""))
+      .filter(Boolean)
+      .slice(0, 100);
+    return { ok: true, detail: `${entries.length} properties visible`, count: entries.length, items };
   },
   tools: [
     {

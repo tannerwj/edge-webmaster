@@ -1,6 +1,6 @@
 import { googleConfigured, googleFetch } from "../google";
 import { obj, type ConnectorPack } from "../registry";
-import { clampInt, OpError, str, strList } from "../util";
+import { clampInt, isRecord, OpError, str, strList } from "../util";
 
 const DATA = "https://analyticsdata.googleapis.com/v1beta";
 const ADMIN = "https://analyticsadmin.googleapis.com/v1beta";
@@ -56,11 +56,18 @@ export const ga4Pack: ConnectorPack = {
     const data = await googleFetch(env, `${ADMIN}/accountSummaries`);
     const accounts = Array.isArray(data.accountSummaries) ? data.accountSummaries : [];
     let count = 0;
+    const items: string[] = [];
     for (const acct of accounts) {
       const props = (acct as { propertySummaries?: unknown }).propertySummaries;
       count += Array.isArray(props) ? props.length : 0;
+      if (!Array.isArray(props)) continue;
+      for (const prop of props) {
+        if (!isRecord(prop)) continue;
+        const name = str(prop.displayName) || str(prop.property);
+        if (name && items.length < 100) items.push(name);
+      }
     }
-    return { ok: true, detail: `${count} properties visible`, count };
+    return { ok: true, detail: `${count} properties visible`, count, items };
   },
   tools: [
     {

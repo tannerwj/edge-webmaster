@@ -37,6 +37,7 @@ export interface PackHealth {
   ok: boolean;
   detail: string;
   count?: number | null;
+  items?: string[];
 }
 
 export interface ConnectorPack {

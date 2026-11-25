@@ -1,6 +1,6 @@
 import { getCredential } from "../creds";
 import { obj, SITE_URL, type ConnectorPack } from "../registry";
-import { OpError, str } from "../util";
+import { isRecord, OpError, str } from "../util";
 
 const API = "https://ssl.bing.com/webmaster/api.svc/json";
 
@@ -68,7 +68,11 @@ export const bingPack: ConnectorPack = {
   health: async (env) => {
     const sites = await bingCall(env, "GetUserSites");
     const count = Array.isArray(sites) ? sites.length : 0;
-    return { ok: true, detail: `${count} verified sites`, count };
+    const items = (Array.isArray(sites) ? sites : [])
+      .map((s) => (isRecord(s) ? str(s.Url) : ""))
+      .filter(Boolean)
+      .slice(0, 100);
+    return { ok: true, detail: `${count} verified sites`, count, items };
   },
   tools: [
     {

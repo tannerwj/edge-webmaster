@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { putCredential } from "../src/creds";
 import { bingPack } from "../src/packs/bing";
+import { ga4Pack } from "../src/packs/ga4";
 import { gscPack } from "../src/packs/gsc";
 import { pagespeedPack } from "../src/packs/pagespeed";
 import type { Env, ToolCtx } from "../src/registry";
@@ -77,6 +78,11 @@ describe("gsc pack against a mocked Google upstream", () => {
       siteEntry: { siteUrl: string }[];
     };
     expect(sites.siteEntry[0]?.siteUrl).toBe("sc-domain:example.com");
+    const health = await gscPack.health(env);
+    expect(health.ok).toBe(true);
+    expect(health.count).toBe(1);
+    expect(health.detail).toBe("1 properties visible");
+    expect(health.items).toEqual(["sc-domain:example.com"]);
     const analytics = (await tool(gscPack, "gsc_query_search_analytics").handler(ctxFor(env), {
       site_url: "sc-domain:example.com",
       dimensions: ["query"],
@@ -108,6 +114,40 @@ describe("bing pack against a mocked Bing upstream", () => {
     const health = await bingPack.health(env);
     expect(health.ok).toBe(true);
     expect(health.detail).toContain("1 verified");
+    expect(health.count).toBe(1);
+    expect(health.items).toEqual(["https://example.com/"]);
+  });
+});
+
+describe("ga4 pack health against a mocked Google upstream", () => {
+  it("lists property display names, falling back to property ids", async () => {
+    const db = new FakeD1();
+    const env = makeEnv(db);
+    await putCredential(env, "google_oauth_client", { client_id: "cid", client_secret: "sec" });
+    await putCredential(env, "google_oauth_tokens", { refresh_token: "rt" });
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "ya29.test", expires_in: 3600 });
+      }
+      if (String(url).includes("accountSummaries")) {
+        return jsonResponse({
+          accountSummaries: [
+            {
+              propertySummaries: [
+                { property: "properties/123", displayName: "Example Site" },
+                { property: "properties/456" },
+              ],
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const health = await ga4Pack.health(env);
+    expect(health.ok).toBe(true);
+    expect(health.count).toBe(2);
+    expect(health.detail).toBe("2 properties visible");
+    expect(health.items).toEqual(["Example Site", "properties/456"]);
   });
 });
 
