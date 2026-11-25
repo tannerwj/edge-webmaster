@@ -1,18 +1,18 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, emailIn, errText, type Connector } from "../api";
+import { JsonCredentialField } from "../components/JsonCredentialField";
 import { StepList, type Step } from "../components/StepList";
+import { TestConnectionButton, type TestOutcome } from "../components/TestConnectionButton";
 
-export interface TestResult {
-  ok: boolean;
-  detail: string;
-}
+export type TestResult = TestOutcome;
 
 export async function runTest(id: string): Promise<TestResult> {
-  const { data } = await api<{ ok?: boolean; detail?: string }>(`/api/connectors/${id}/test`, {
+  const { data } = await api<{ ok?: boolean; detail?: string; items?: unknown }>(`/api/connectors/${id}/test`, {
     method: "POST",
     body: "{}",
   });
-  return { ok: Boolean(data.ok), detail: data.detail ?? "" };
+  const items = Array.isArray(data.items) ? data.items.filter((i): i is string => typeof i === "string") : undefined;
+  return { ok: Boolean(data.ok), detail: data.detail ?? "", ...(items ? { items } : {}) };
 }
 
 export function ResultLine({ result }: { result: TestResult | string | null }) {
@@ -44,12 +44,10 @@ const APIS_STEP: Step = {
   links: API_LINKS,
 };
 
-function TestStepContent({ onTest, busy, successHint }: { onTest: () => void; busy: boolean; successHint: string }) {
+function TestStepContent({ onTest, successHint }: { onTest: () => Promise<TestResult>; successHint: string }) {
   return (
     <div>
-      <div className="row">
-        <button type="button" onClick={onTest} disabled={busy}>Test connection</button>
-      </div>
+      <TestConnectionButton onTest={onTest} />
       <p className="small muted">{successHint}</p>
     </div>
   );
@@ -59,12 +57,10 @@ export function GoogleSetup({
   packs,
   refresh,
   onTest,
-  busy,
 }: {
   packs: Connector[];
   refresh: () => void;
-  onTest: () => Promise<void>;
-  busy: boolean;
+  onTest: () => Promise<TestResult>;
 }) {
   const [tab, setTab] = useState<"sa" | "oauth">("sa");
   const [saJson, setSaJson] = useState("");
@@ -140,12 +136,11 @@ export function GoogleSetup({
       instruction: "Open the account → Keys → Add key → Create new key → JSON → Create. A .json file downloads.",
     },
     {
-      title: "Paste the JSON key here",
-      instruction: "Paste the full contents of the downloaded .json file, then Save.",
+      title: "Add the JSON key",
+      instruction: "Paste the full contents of the downloaded .json file — or choose/drop the file here — then Save.",
       content: (
         <div>
-          <label htmlFor="g-sa">Service account JSON key</label>
-          <textarea id="g-sa" placeholder='{"type":"service_account","client_email":"…","private_key":"…"}' value={saJson} onChange={(e) => onSaChange(e.target.value)} />
+          <JsonCredentialField id="g-sa" label="Service account JSON key" value={saJson} onChange={onSaChange} placeholder='{"type":"service_account","client_email":"…","private_key":"…"}' />
           <div className="row">
             <button type="button" onClick={() => void saveSa()} disabled={saving || !saJson.trim()}>Save service account</button>
           </div>
@@ -153,18 +148,41 @@ export function GoogleSetup({
       ),
     },
     {
-      title: "Give it access to your sites",
+      title: "Grant access in Google (one-time, per property)",
       instruction: shownEmail
         ? "Add this service account email as a user on each property. Search Console: pick the property → Settings → Users and permissions → Add user → paste the email → Restricted. GA4: Admin → Property access management → + → paste the email → Viewer. Repeat per property."
         : "The email is the client_email in the JSON you pasted (it's shown here after you paste or save + test). Search Console: pick the property → Settings → Users and permissions → Add user → paste the email → Restricted. GA4: Admin → Property access management → + → paste the email → Viewer. Repeat per property.",
-      links: [{ label: "Open Search Console", href: "https://search.google.com/search-console" }],
+      links: [
+        { label: "Open Search Console", href: "https://search.google.com/search-console" },
+        { label: "Open Google Analytics", href: "https://analytics.google.com" },
+      ],
       copyValue: shownEmail ?? undefined,
       copyLabel: "Copy service account email",
+      content: (
+        <div>
+          <p className="why-box">
+            Why by hand? Google's Search Console API can list and manage properties, but it exposes no way to
+            manage a property's users or permissions — no app can grant a service account access for you. This
+            step is manual in Google's UI by design. Cloudflare isn't involved: a site being in your Cloudflare
+            account doesn't put it in Search Console or grant anything.
+          </p>
+          <ul className="examples small">
+            <li>
+              Many sites? Use the OAuth sign-in tab instead — it acts as your own Google account, so every
+              property you already have access to works immediately, with zero per-property grants.
+            </li>
+            <li>
+              Fewer grants: a Domain property in Search Console (sc-domain:…) needs just one grant and covers
+              all subdomains plus both http and https — far fewer than separate URL-prefix properties.
+            </li>
+          </ul>
+        </div>
+      ),
     },
     {
       title: "Test the connection",
       instruction: "Run the test. Success shows how many properties the connection can see.",
-      content: <TestStepContent onTest={() => void onTest()} busy={busy} successHint="Success looks like: a property count greater than zero." />,
+      content: <TestStepContent onTest={onTest} successHint="Success lists the properties the connection can see — a property count greater than zero, with the property names shown." />,
     },
   ];
 
@@ -234,14 +252,12 @@ function FieldSteps({
   c,
   refresh,
   onTest,
-  busy,
   stepsBefore,
   successHint,
 }: {
   c: Connector;
   refresh: () => void;
-  onTest: () => Promise<void>;
-  busy: boolean;
+  onTest: () => Promise<TestResult>;
   stepsBefore: Step[];
   successHint: string;
 }) {
@@ -291,7 +307,7 @@ function FieldSteps({
     {
       title: "Test the connection",
       instruction: "Run the test to verify the key works.",
-      content: <TestStepContent onTest={() => void onTest()} busy={busy} successHint={successHint} />,
+      content: <TestStepContent onTest={onTest} successHint={successHint} />,
     },
   ];
   return (
@@ -302,13 +318,12 @@ function FieldSteps({
   );
 }
 
-export function BingSetup({ c, refresh, onTest, busy }: { c: Connector; refresh: () => void; onTest: () => Promise<void>; busy: boolean }) {
+export function BingSetup({ c, refresh, onTest }: { c: Connector; refresh: () => void; onTest: () => Promise<TestResult> }) {
   return (
     <FieldSteps
       c={c}
       refresh={refresh}
       onTest={onTest}
-      busy={busy}
       successHint="Success looks like: a count of your verified sites."
       stepsBefore={[
         {
@@ -326,7 +341,7 @@ export function BingSetup({ c, refresh, onTest, busy }: { c: Connector; refresh:
   );
 }
 
-export function PageSpeedSetup({ c, refresh, onTest, busy }: { c: Connector; refresh: () => void; onTest: () => Promise<void>; busy: boolean }) {
+export function PageSpeedSetup({ c, refresh, onTest }: { c: Connector; refresh: () => void; onTest: () => Promise<TestResult> }) {
   return (
     <div>
       <p className="muted">
@@ -337,7 +352,6 @@ export function PageSpeedSetup({ c, refresh, onTest, busy }: { c: Connector; ref
         c={c}
         refresh={refresh}
         onTest={onTest}
-        busy={busy}
         successHint="Success confirms the key is accepted by CrUX."
         stepsBefore={[
           {
