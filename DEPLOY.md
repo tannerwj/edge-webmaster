@@ -45,6 +45,12 @@ The deploy button installs the Worker and database in your account. Open **Agent
 
 **Rollback.** To stop browser-based agent access, disable Managed OAuth on the agent app and remove `ACCESS_MCP_AUD` from the Worker. Keep the restricted Access policy in place. Remove the token-path exception if you also want to stop external bearer clients. Use the dashboard’s setup token if you need to correct Worker audience variables after signing in through Access.
 
+## Connect IndexNow
+
+Open **Connections → IndexNow**. Enter the exact HTTPS site root, download the generated verification file (or enter an existing IndexNow key), and publish the file at that website’s root. If your hosting plan does not let you serve a root text file, use your host’s native IndexNow integration if available. Click **Verify file and save site**. Repeat for each hostname you manage.
+
+Select a verified site and enter its changed URLs to submit from the dashboard. For an agent, give a write token access to IndexNow and optionally list exact HTTPS site roots including the trailing slash. Ask it to call `indexnow.submit_urls({site_url:"https://example.com/", urls:["https://example.com/updated"]})`. Managed OAuth and read tokens can recheck the key file. HTTP 200 confirms submission and 202 means IndexNow is still checking the key. Indexing is a separate search-engine decision. Disconnecting clears all saved IndexNow sites from this installation. [IndexNow protocol](https://www.indexnow.org/documentation)
+
 ## Connect PageSpeed Insights and CrUX
 
 PageSpeed lab reports can run without a key. For CrUX field data and history, enable **PageSpeed Insights API** and **Chrome UX Report API** in the same Google Cloud project. Open each API’s Library page and click Enable (Manage means it is already enabled). If an API is missing from the restriction picker, confirm it is enabled in the project that owns the key, then reload Credentials. In Credentials, create a dedicated API key. Set **Application restrictions → None** for the standard server-side Worker. Set **API restrictions → Restrict key** and select only those two APIs. Save the key in Connections → PageSpeed Insights + CrUX. **Test connection** checks CrUX. Run a PageSpeed lab report to check the other API. OAuth publishing status has no bearing on this key.

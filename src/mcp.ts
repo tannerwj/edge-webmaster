@@ -13,7 +13,7 @@ const MODERN_VERSION = "2026-07-28";
 const SERVER_INFO = { name: "edge-webmaster", title: "Edge Webmaster", version: VERSION };
 const INSTRUCTIONS =
   "Webmaster tools for the sites connected to this self-hosted Edge Webmaster deployment. " +
-  "Prefer the execute tool: one JS snippet against the typed gsc / ga4 / bing / pagespeed proxies, chaining calls and filtering in code — only the return value comes back. " +
+  "Prefer the execute tool: one JS snippet against the typed connector proxies, chaining calls and filtering in code — only the return value comes back. " +
   "Use search_tools to discover what is connected, and individual tools for single calls in raw mode.";
 
 type RpcId = string | number | null;
@@ -57,7 +57,7 @@ function executeToolDef(tools: ToolDef[]): Record<string, unknown> {
       (decls ? `Available tools:\n\`\`\`ts\n${decls}\n\`\`\`` : "No connectors are connected yet, so no namespace tools are available. Ask the owner to finish setup."),
     inputSchema: {
       type: "object",
-      properties: { code: { type: "string", description: "JS statements using gsc, ga4, bing, pagespeed and console." } },
+      properties: { code: { type: "string", description: "JS statements using the listed connector namespaces and console." } },
       required: ["code"],
     },
     annotations: { readOnlyHint: false, destructiveHint: false },

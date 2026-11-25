@@ -1,3 +1,4 @@
+import { configureIndexNow, disconnectIndexNow, submitIndexNow } from "./packs/indexnow";
 import { liveToolsFor } from "./runtime";
 import { validGrants } from "./grants";
 import { deleteCredential, getCredential, putCredential } from "./creds";
@@ -309,6 +310,8 @@ async function disconnectConnector(env: Env, id: string): Promise<Response> {
     await deleteCredential(env, "google_service_account");
     await deleteCredential(env, "google_oauth_client");
     invalidateGoogleTokenCache();
+  } else if (id === "indexnow") {
+    await disconnectIndexNow(env);
   } else if (id === "bing-webmaster") {
     await deleteCredential(env, "bing");
   } else if (id === "pagespeed-crux") {
@@ -459,6 +462,16 @@ async function oauthUrl(env: Env, url: URL): Promise<Response> {
 }
 
 async function routeConnectors(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response | null> {
+  if (req.method === "POST" && ["/api/connectors/indexnow/configure", "/api/connectors/indexnow/submit"].includes(path)) {
+    const body: unknown = await req.json().catch(() => null);
+    if (!isRecord(body)) return json({ error: "Expected a JSON object." }, 400);
+    try {
+      const submit = path.endsWith("/submit");
+      const result = await (submit ? submitIndexNow : configureIndexNow)(env, body);
+      audit(ctx, env, "setup-ui", submit ? "indexnow.submit" : "connector.configure", "indexnow");
+      return json(result);
+    } catch (error) { return json({ error: error instanceof OpError ? error.message : "IndexNow request failed. Try again." }, 400); }
+  }
   const action = path.match(/^\/api\/connectors\/([a-z-]+)\/(configure|test)$/);
   if (action && req.method === "POST") {
     if (action[2] === "test") return testConnector(env, action[1] ?? "");

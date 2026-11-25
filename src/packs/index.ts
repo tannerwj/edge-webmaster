@@ -4,4 +4,6 @@ import { ga4Pack } from "./ga4";
 import { gscPack } from "./gsc";
 import { pagespeedPack } from "./pagespeed";
 
-export const PACKS: ConnectorPack[] = [gscPack, ga4Pack, bingPack, pagespeedPack];
+import { indexNowPack } from "./indexnow";
+
+export const PACKS: ConnectorPack[] = [gscPack, ga4Pack, bingPack, pagespeedPack, indexNowPack];

@@ -1,3 +1,4 @@
+import { IndexNowSetup } from "./IndexNowSetup";
 import { useEffect, useState } from "react";
 import { api, errText, type Connector, type StatusBody } from "../api";
 import { Link } from "../components/nav";
@@ -97,9 +98,7 @@ export function ConnectorPage({
           {isGoogle && <GoogleSetup packs={googlePacks.length ? googlePacks : [connector]} refresh={refresh} onTest={test} />}
           {connector.id === "bing-webmaster" && <BingSetup c={connector} refresh={refresh} onTest={test} />}
           {connector.id === "pagespeed-crux" && <PageSpeedSetup c={connector} refresh={refresh} onTest={test} />}
-          {!isGoogle && connector.id !== "bing-webmaster" && connector.id !== "pagespeed-crux" && (
-            <p className="muted">Follow the provider's setup, save credentials, then test above.</p>
-          )}
+          {connector.id === "indexnow" && <IndexNowSetup sites={connector.health?.items ?? []} refresh={refresh} />}
         </div>
       </section>
 
@@ -114,7 +113,7 @@ export function ConnectorPage({
                 {typeof connector.health.count === "number" ? ` (${connector.health.count} properties)` : ""}
               </p>
             )}
-            <TestConnectionButton onTest={test} />
+            {connector.id !== "indexnow" && <TestConnectionButton onTest={test} />}
           </div>
         </section>
 

@@ -264,7 +264,7 @@ describe("/api/status dashboard summary", () => {
       connectors: Record<string, unknown>[];
     };
     expect(body.summary.connections_active).toBe(1);
-    expect(body.summary.connections_total).toBe(4);
+    expect(body.summary.connections_total).toBe(5);
     expect(body.summary.properties_discovered).toBeNull();
     expect(body.summary.active_agent_tokens).toBe(0);
     expect(body.summary.tool_calls_last_7d).toBe(0);

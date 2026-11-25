@@ -39,10 +39,11 @@ if (SETUP_TOKEN) {
 }
 
 const status = await api("/api/status");
-check("status lists 4 connectors", status.data.connectors?.length === 4, (status.data.connectors || []).map((c) => c.id).join(","));
+check("status lists 5 connectors", status.data.connectors?.length === 5, (status.data.connectors || []).map((c) => c.id).join(","));
 const byId = Object.fromEntries((status.data.connectors || []).map((c) => [c.id, c]));
 check("pagespeed always configured", byId["pagespeed-crux"]?.configured === true);
 check("google not configured yet", byId["google-search-console"]?.configured === false);
+check("IndexNow hidden until a site is verified", byId.indexnow?.advertise === false);
 check("bing not configured yet", byId["bing-webmaster"]?.configured === false);
 
 const unavailableReport = await api("/api/reports/gsc_query_search_analytics", { method: "POST", body: "{}" });
@@ -84,6 +85,7 @@ if (MODE === "code") {
   check("code mode lists only search_tools + execute", JSON.stringify(names) === JSON.stringify(["search_tools", "execute"]), names.join(","));
   const execDesc = list.data.result.tools.find((t) => t.name === "execute")?.description || "";
   check("execute declares pagespeed proxy", execDesc.includes("declare const pagespeed"));
+  check("execute omits unverified IndexNow sites", !execDesc.includes("declare const indexnow"));
   check("execute omits unconfigured gsc proxy", !execDesc.includes("declare const gsc"));
 } else {
   check("raw mode lists pagespeed tools directly", names.includes("pagespeed_run") && !names.includes("pagespeed_crux_record"), names.join(","));

@@ -2,7 +2,7 @@
 
 A free, open-source, **self-hosted MCP server** that gives AI agents access to
 your webmaster tools — Google Search Console, Google Analytics 4, Bing
-Webmaster Tools, and PageSpeed Insights / CrUX — from one Cloudflare Worker
+Webmaster Tools, PageSpeed Insights / CrUX, and IndexNow — from one Cloudflare Worker
 that runs in **your own** Cloudflare account.
 
 No hosted shim holds your credentials. You deploy it, you connect your own
@@ -14,13 +14,13 @@ Part of the Edge family: [Edge IDP](https://github.com/tannerwj/edge-idp) ·
 
 ## Why code mode?
 
-A flat MCP catalog for four platforms would be dozens of tools in every
+A flat MCP catalog for all platforms would be dozens of tools in every
 agent's context. Edge Webmaster defaults to **code mode**: agents see exactly
 two tools —
 
 - `search_tools` — search the catalog of the connectors you actually connected
 - `execute` — run one JavaScript snippet in an isolated sandbox against typed
-  proxies (`gsc`, `ga4`, `bing`, `pagespeed`), chaining calls and filtering in
+  proxies (`gsc`, `ga4`, `bing`, `pagespeed`, `indexnow`), chaining calls and filtering in
   code; only the return value comes back
 
 Connectors that aren't set up don't advertise tools at all — no dead ends for
@@ -45,6 +45,7 @@ tool is listed directly.
 | Google Analytics 4 (`ga4`) | list properties, metadata, reports, realtime reports, period comparison |
 | Bing Webmaster (`bing`) | list sites, query stats, page stats, traffic stats, crawl issues |
 | PageSpeed + CrUX (`pagespeed`) | PageSpeed runs (mobile/desktop), CrUX record and history |
+| IndexNow (`indexnow`) | verify a site key file and notify participating search engines of changed URLs |
 
 Plus an MCP prompt (`performance_review`), per-tool call metrics and an audit
 log in D1, AES-GCM-wrapped credential storage, and a feedback endpoint

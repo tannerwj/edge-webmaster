@@ -58,7 +58,7 @@ export interface ConnectorPack {
   authType: "oauth" | "api-key" | "optional-key";
   blurb: string;
   provider: string;
-  connectionId: "google" | "bing" | "pagespeed";
+  connectionId: "google" | "bing" | "pagespeed" | "indexnow";
   setupKind: "oauth-or-service-account" | "api-key" | "no-setup-optional-key";
   authLabel: string;
   access: PackAccess;

@@ -1,3 +1,4 @@
+import { indexNowPack } from "../src/packs/indexnow";
 import { grantTools } from "../src/grants";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { putCredential } from "../src/creds";
@@ -222,5 +223,19 @@ describe("pagespeed pack against a mocked Google upstream", () => {
     expect(health.ok).toBe(false);
     expect(health.detail).toContain("400");
     expect(health.detail).toContain("API key not valid");
+  });
+});
+
+describe("IndexNow agent grants", () => {
+  it("enforces the exact site grant before either checking a file or submitting", async () => {
+    const ctx = ctxFor(makeEnv(new FakeD1()));
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const tools = grantTools(indexNowPack.tools, { indexnow: ["https://example.com/"] });
+    expect(tools.map(t => t.write)).toEqual([false, true]);
+    for (const t of tools) {
+      await expect(t.handler(ctx, { site_url: "https://other.example/" })).rejects.toThrow("access to that property");
+    }
+    expect(upstream).not.toHaveBeenCalled();
   });
 });

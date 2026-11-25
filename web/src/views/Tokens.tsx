@@ -121,7 +121,7 @@ export function Tokens({ managedOAuth, connectors }: { managedOAuth: boolean; co
         <h3>Agent tokens</h3>
         <p className="muted">
           Tokens authenticate MCP clients. Read tokens can query; write tokens can also submit
-          sitemaps. The raw token is shown once, at creation.
+          sitemaps and IndexNow notifications. The raw token is shown once, at creation.
         </p>
         <TokenGrants connectors={connectors} selected={selected} change={setSelected} />
         <div className="row token-create">

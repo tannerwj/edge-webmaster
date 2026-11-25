@@ -262,3 +262,30 @@ describe("google callback redirect", () => {
     expect(res.headers.get("location")).toBe("/connections/google-search-console?connected=google");
   });
 });
+
+describe("IndexNow ownership and URL submissions", () => {
+  it("verifies the root key before saving and rejects cross-origin batches before notifying IndexNow", async () => {
+    const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
+    const cookie = await loginCookie(env);
+    const key = "abcd1234";
+    const site = "https://www.example.com/";
+    const request = (action: string, body: unknown) =>
+      call(env, "/api/connectors/indexnow/" + action, jsonInit("POST", body, { cookie }));
+    const upstream = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === site + "wrongkey.txt") return new Response("incorrect contents");
+      if (url === site + key + ".txt") return new Response(key);
+      expect(url).toBe("https://api.indexnow.org/indexnow");
+      expect(JSON.parse(typeof init?.body === "string" ? init.body : "")).toEqual({ host: "www.example.com", key, urlList: [site + "changed"] });
+      return new Response(null, { status: 202 });
+    });
+    vi.stubGlobal("fetch", upstream);
+    expect((await request("configure", { site_url: site, api_key: "wrongkey" })).status).toBe(400);
+    expect((await request("configure", { site_url: site, api_key: key })).status).toBe(200);
+    upstream.mockClear();
+    expect((await request("submit", { site_url: site, urls: [site + "ok", "https://example.org/"] })).status).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+    const result = await request("submit", { site_url: site, urls: [site + "changed"] });
+    expect(await result.json()).toMatchObject({ status: 202, submitted: 1 });
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+});

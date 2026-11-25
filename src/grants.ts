@@ -10,7 +10,7 @@ export function validGrants(value: unknown): value is Grants {
   return Object.entries(value).every(([ns, sites]) =>
     PACKS.some((p) => p.namespace === ns) && Array.isArray(sites) &&
     sites.every((site) => typeof site === "string" && site.trim() === site && site.length > 0 &&
-      (ns !== "ga4" || /^\d+$/.test(site))) && (["gsc", "bing", "ga4"].includes(ns) || sites.length === 0));
+      (ns !== "ga4" || /^\d+$/.test(site))) && (["gsc", "bing", "ga4", "indexnow"].includes(ns) || sites.length === 0));
 }
 
 export function grantTools(tools: ToolDef[], grants?: Grants | null): ToolDef[] {
