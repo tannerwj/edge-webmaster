@@ -234,7 +234,7 @@ describe("IndexNow agent grants", () => {
     const tools = grantTools(indexNowPack.tools, { indexnow: ["https://example.com/"] });
     expect(tools.map(t => t.write)).toEqual([false, true]);
     for (const t of tools) {
-      await expect(t.handler(ctx, { site_url: "https://other.example/" })).rejects.toThrow("access to that property");
+      await expect(async () => t.handler(ctx, { site_url: "https://other.example/" })).rejects.toThrow("access to that property");
     }
     expect(upstream).not.toHaveBeenCalled();
   });
