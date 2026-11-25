@@ -5,8 +5,8 @@
     "gates": ["lint", "abc", "tsc", "deadcode", "secrets", "cycles", "dupes", "todos", "ratchet"]
   },
   "roots": ["src", "scripts"],
-  "tsc": { "projects": ["tsconfig.json"] },
-  "exclude": ["\\.d\\.ts$", "\\.test\\.tsx?$"],
+  "tsc": { "projects": ["tsconfig.json", "web/tsconfig.json"] },
+  "exclude": ["\\.d\\.ts$", "\\.test\\.tsx?$", "frontend\\.gen\\.ts$"],
   "abc": { "budget": 60, "allow": {} },
   "ratchet": {
     "file": "abacus.ratchet.json",

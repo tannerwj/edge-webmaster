@@ -1,13 +1,1 @@
-{
-  "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "src/index.ts",
-    "**/*.test.{ts,tsx}",
-    "*.config.{ts,js,mjs}",
-    "tests/e2e/**/*.mjs",
-    "scripts/**/*.{ts,js,mjs}"
-  ],
-  "ignore": ["dist/**", ".wrangler/**"],
-  "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["cloudflare"]
-}
+{"$schema":"https://unpkg.com/knip@6/schema.json","entry":["src/index.ts","web/src/main.tsx","**/*.test.{ts,tsx}","*.config.{ts,js,mjs}","web/*.config.{ts,js,mjs}","tests/e2e/**/*.mjs","scripts/**/*.{ts,js,mjs}"],"ignore":["dist/**",".wrangler/**","web/dist/**","src/frontend.gen.ts"],"ignoreDependencies":["cloudflare"],"ignoreExportsUsedInFile":true}

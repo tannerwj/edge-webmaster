@@ -4,3 +4,5 @@ node_modules/
 .dev.vars.*
 dist/
 *.log
+web/dist/
+web/node_modules/

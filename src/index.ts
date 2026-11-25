@@ -1,7 +1,7 @@
 import { handleApi, handleGoogleCallback } from "./api";
 import { handleMcp, VERSION } from "./mcp";
 import type { Env } from "./registry";
-import { UI_HTML } from "./ui";
+import { UI_HTML } from "./frontend.gen";
 
 export { WebmasterCodeSandbox } from "./sandbox";
 
