@@ -2,8 +2,6 @@ export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 export const str = (v: unknown): string => (typeof v === "string" ? v : "");
-export const num = (v: unknown, fallback: number): number =>
-  typeof v === "number" && Number.isFinite(v) ? v : fallback;
 export const strList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 export const nowSec = (): number => Math.floor(Date.now() / 1000);

@@ -1,4 +1,4 @@
-import { liveTools, packStatuses, searchTools, type Env, type ToolDef } from "./registry";
+import { packStatuses, searchTools, type Env, type ToolDef } from "./registry";
 import { PACKS } from "./packs";
 import { liveToolsFor } from "./runtime";
 import { toolDeclarations } from "./registry";
@@ -263,4 +263,3 @@ export async function handleMcp(req: Request, env: Env, ctx: ExecutionContext): 
   return rpcError(id, -32601, `Method not found: ${body.method}`);
 }
 
-export { liveTools };

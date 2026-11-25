@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tannerwj/edge-webmaster",
+  "title": "Edge Webmaster",
+  "description": "Self-hosted code-mode MCP server for Google Search Console, GA4, Bing Webmaster and PageSpeed/CrUX. Deploy to your own Cloudflare account; agents connect with a token you issue.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/tannerwj/edge-webmaster",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/tannerwj/edge-webmaster",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://YOUR-INSTANCE.example.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer agent token (ew_…) issued in your instance's setup wizard",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

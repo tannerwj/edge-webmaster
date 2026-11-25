@@ -13,7 +13,7 @@ async function bingCall(env: Parameters<typeof getCredential>[0], method: string
   if (!cred?.api_key) throw new OpError("Bing Webmaster is not connected. Add its API key in setup.");
   const params = new URLSearchParams({ apikey: cred.api_key });
   if (site) params.set("siteUrl", site);
-  const res = await fetch(`${API}/${method}?${params}`);
+  const res = await fetch(`${API}/${method}?${params.toString()}`);
   const text = await res.text();
   let data: Record<string, unknown> = {};
   try {

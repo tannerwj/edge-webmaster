@@ -1,9 +1,9 @@
-import { deleteCredential, getCredential, putCredential } from "./creds";
+import { deleteCredential, putCredential } from "./creds";
 import { googleAuthUrl, googleRedirectUri } from "./google";
 import { PACKS } from "./packs";
 import { packStatuses, type Env } from "./registry";
 import { audit, createAgentToken, listAgentTokens, revokeAgentToken } from "./store";
-import { isRecord, nowSec, OpError, randomToken, sha256Hex, str, timingSafeEqual } from "./util";
+import { nowSec, OpError, randomToken, sha256Hex, str, timingSafeEqual } from "./util";
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -115,50 +115,68 @@ async function disconnectConnector(env: Env, id: string): Promise<Response> {
 
 export async function handleApi(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response> {
   const url = new URL(req.url);
-  if (path === "/api/login" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!env.SETUP_TOKEN || !timingSafeEqual(str(body.token), env.SETUP_TOKEN)) {
-      return json({ error: "That setup token did not match." }, 401);
-    }
-    const value = await sessionCookieValue(env);
-    return json({ ok: true }, 200, {
-      "set-cookie": `ew_setup=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`,
-    });
-  }
-  if (path === "/api/feedback" && req.method === "POST") {
-    return handleFeedback(req, env);
-  }
+  if (path === "/api/login" && req.method === "POST") return login(req, env);
+  if (path === "/api/feedback" && req.method === "POST") return handleFeedback(req, env);
   const gate = await requireAdmin(req, env);
   if (gate) return gate;
+  return routeAdmin(req, env, ctx, path, url);
+}
+
+async function login(req: Request, env: Env): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!env.SETUP_TOKEN || !timingSafeEqual(str(body.token), env.SETUP_TOKEN)) {
+    return json({ error: "That setup token did not match." }, 401);
+  }
+  const value = await sessionCookieValue(env);
+  return json({ ok: true }, 200, {
+    "set-cookie": `ew_setup=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`,
+  });
+}
+
+async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: string, url: URL): Promise<Response> {
   if (path === "/api/status" && req.method === "GET") return json(await statusBody(env));
-  if (path === "/api/google/oauth-url" && req.method === "GET") {
-    const state = randomToken("st_");
-    await env.DB.prepare(
-      "INSERT INTO settings (key, value, updated_at) VALUES ('oauth_state', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-      .bind(state, nowSec())
-      .run();
-    try {
-      return json({ url: await googleAuthUrl(env, url.origin, state), redirect_uri: googleRedirectUri(env, url.origin) });
-    } catch (e) {
-      return json({ error: e instanceof Error ? e.message : String(e) }, 400);
-    }
+  if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
+  if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
+  const connector = await routeConnectors(req, env, ctx, path);
+  if (connector) return connector;
+  const tokens = await routeTokens(req, env, ctx, path);
+  if (tokens) return tokens;
+  return json({ error: "Not found." }, 404);
+}
+
+async function oauthUrl(env: Env, url: URL): Promise<Response> {
+  const state = randomToken("st_");
+  await env.DB.prepare(
+    "INSERT INTO settings (key, value, updated_at) VALUES ('oauth_state', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  )
+    .bind(state, nowSec())
+    .run();
+  try {
+    return json({ url: await googleAuthUrl(env, url.origin, state), redirect_uri: googleRedirectUri(env, url.origin) });
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
-  const configureMatch = path.match(/^\/api\/connectors\/([a-z-]+)\/(configure|test)$/);
-  if (configureMatch && req.method === "POST") {
-    const [, id, action] = configureMatch;
-    if (action === "test") return testConnector(env, id ?? "");
+}
+
+async function routeConnectors(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response | null> {
+  const action = path.match(/^\/api\/connectors\/([a-z-]+)\/(configure|test)$/);
+  if (action && req.method === "POST") {
+    if (action[2] === "test") return testConnector(env, action[1] ?? "");
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    const res = await configureConnector(env, id ?? "", body);
-    if (res.ok) audit(ctx, env, "setup-ui", "connector.configure", id ?? "");
+    const res = await configureConnector(env, action[1] ?? "", body);
+    if (res.ok) audit(ctx, env, "setup-ui", "connector.configure", action[1] ?? "");
     return res;
   }
-  const disconnectMatch = path.match(/^\/api\/connectors\/([a-z-]+)$/);
-  if (disconnectMatch && req.method === "DELETE") {
-    const res = await disconnectConnector(env, disconnectMatch[1] ?? "");
-    if (res.ok) audit(ctx, env, "setup-ui", "connector.disconnect", disconnectMatch[1] ?? "");
+  const disconnect = path.match(/^\/api\/connectors\/([a-z-]+)$/);
+  if (disconnect && req.method === "DELETE") {
+    const res = await disconnectConnector(env, disconnect[1] ?? "");
+    if (res.ok) audit(ctx, env, "setup-ui", "connector.disconnect", disconnect[1] ?? "");
     return res;
   }
+  return null;
+}
+
+async function routeTokens(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response | null> {
   if (path === "/api/tokens" && req.method === "GET") return json({ tokens: await listAgentTokens(env) });
   if (path === "/api/tokens" && req.method === "POST") {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -168,14 +186,13 @@ export async function handleApi(req: Request, env: Env, ctx: ExecutionContext, p
     audit(ctx, env, "setup-ui", "token.create", `${name}:${scope}`);
     return json({ token: created.token, record: created.record });
   }
-  const tokenMatch = path.match(/^\/api\/tokens\/([A-Za-z0-9_-]+)$/);
-  if (tokenMatch && req.method === "DELETE") {
-    await revokeAgentToken(env, tokenMatch[1] ?? "");
-    audit(ctx, env, "setup-ui", "token.revoke", tokenMatch[1] ?? "");
+  const match = path.match(/^\/api\/tokens\/([A-Za-z0-9_-]+)$/);
+  if (match && req.method === "DELETE") {
+    await revokeAgentToken(env, match[1] ?? "");
+    audit(ctx, env, "setup-ui", "token.revoke", match[1] ?? "");
     return json({ ok: true });
   }
-  if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
-  return json({ error: "Not found." }, 404);
+  return null;
 }
 
 async function metrics(env: Env): Promise<Record<string, unknown>> {
@@ -224,8 +241,4 @@ export async function handleGoogleCallback(req: Request, env: Env): Promise<Resp
   }
   await env.DB.prepare("DELETE FROM settings WHERE key = 'oauth_state'").run();
   return new Response(null, { status: 302, headers: { location: "/?connected=google" } });
-}
-
-export async function googleConnectionPresent(env: Env): Promise<boolean> {
-  return Boolean(await getCredential(env, "google_oauth_tokens"));
 }

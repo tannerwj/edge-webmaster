@@ -1,6 +1,6 @@
 {
-  "loc src": 0,
-  "comments src": 0,
-  "abcMax": 0,
+  "loc src": 2098,
+  "comments src": 0.001,
+  "abcMax": 40,
   "oxlintWarnings": 0
 }

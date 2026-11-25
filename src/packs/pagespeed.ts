@@ -14,7 +14,7 @@ async function keyParam(env: Parameters<typeof getCredential>[0]): Promise<strin
 async function runOnce(env: Parameters<typeof getCredential>[0], url: string, strategy: string) {
   const params = new URLSearchParams({ url, strategy, category: "performance" });
   const res = await fetch(
-    `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}${await keyParam(env)}`,
+    `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}${await keyParam(env)}`,
   );
   const data = (await res.json()) as Record<string, unknown>;
   if (!res.ok) {

@@ -46,7 +46,7 @@ export async function googleAuthUrl(env: Env, origin: string, state: string): Pr
     prompt: "consent",
     state,
   });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
 export async function exchangeGoogleCode(env: Env, origin: string, code: string): Promise<void> {
@@ -163,10 +163,10 @@ export async function googleFetch(
   init: RequestInit = {},
 ): Promise<Record<string, unknown>> {
   const token = await googleAccessToken(env);
-  const res = await fetch(url, {
-    ...init,
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
-  });
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  headers.set("content-type", "application/json");
+  const res = await fetch(url, { ...init, headers });
   const text = await res.text();
   let data: Record<string, unknown> = {};
   try {

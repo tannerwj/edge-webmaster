@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { toolDeclarations, toolForProxy } from "./registry";
-import type { Env, ToolDef } from "./registry";
+import { toolForProxy } from "./registry";
+import type { Env } from "./registry";
 import { liveToolsFor } from "./runtime";
 import { tokenStillActive, trackCall } from "./store";
 import { isRecord, OpError } from "./util";
