@@ -39,20 +39,37 @@ The setup UI can connect accounts and mint agent tokens, so protect it:
 ## 3. Connect Google
 
 Use the setup wizard's Google card. You need your **own** Google Cloud
-project — there is no shared OAuth client, by design:
+project — there is no shared OAuth client, by design. Pick one of three
+paths:
+
+**Service account — recommended for sites you own.** No consent screen and
+no token expiry. Create a service account in your Google Cloud project,
+download its JSON key, paste it into the wizard, and add the service account
+email as a user on each Search Console property and GA4 property it should
+read.
+
+**OAuth, Internal.** Only available when your Google Cloud project belongs
+to a Google Workspace organization, and only for accounts inside that
+organization. A personal @gmail.com account cannot use Internal — the option
+simply does not appear. If your project is in a Workspace org and every
+account you will sign in with belongs to it, this is the low-maintenance
+OAuth path.
+
+**OAuth, External.** The path for personal accounts:
 
 1. Create a project in Google Cloud Console.
 2. Enable: Google Search Console API, Google Analytics Data API, Google
    Analytics Admin API.
-3. Configure the OAuth consent screen (External; add yourself as a test user
-   while it is in Testing).
+3. Configure the OAuth consent screen as External.
 4. Create an OAuth client (Web application) with the redirect URI the wizard
    displays (`https://<your-instance>/auth/google/callback`).
-5. Paste the client ID/secret into the wizard, save, and press
+5. **Publish the app (In production).** Do not leave it in Testing — Google
+   expires refresh tokens issued to Testing apps after 7 days, so the
+   connection would silently die a week later. Publishing for personal use
+   does not require a verification submission; expect a one-time
+   "unverified app" warning when you connect (choose Advanced → proceed).
+6. Paste the client ID/secret into the wizard, save, and press
    **Connect Google**.
-
-Service accounts also work: paste the JSON key in the wizard and add the
-service account email as a user on each Search Console / GA4 property.
 
 ## 4. Issue agent tokens and connect clients
 

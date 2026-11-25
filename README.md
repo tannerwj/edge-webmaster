@@ -35,9 +35,12 @@ tool is listed directly.
    D1 database and apply migrations as [DEPLOY.md](DEPLOY.md) describes, and
    set the `DEPLOYMENT_SECRET` and `SETUP_TOKEN` secrets.
 2. Open your worker's URL. The setup wizard walks you through:
-   - **Google** — create your own Google Cloud OAuth client (the wizard shows
-     the exact redirect URI and steps), connect once, and both Search Console
-     and GA4 light up. A service-account JSON works too.
+   - **Google** — for sites you own, paste a service-account JSON (no consent
+     screen, no token expiry). OAuth also works: create your own Google Cloud
+     OAuth client (the wizard shows the exact redirect URI and steps),
+     connect once, and both Search Console and GA4 light up. See DEPLOY.md
+     for the Internal (Workspace org) vs External (personal account — publish
+     the app, don't stay in Testing) choice.
    - **Bing** — paste a Webmaster API key.
    - **PageSpeed/CrUX** — works immediately; an API key is optional.
 3. Mint an **agent token** (read or write scope) in the wizard.
