@@ -1,48 +1,58 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errText, type StatusBody } from "./api";
+import { api, errText, type Me, type StatusBody, type ThemePref } from "./api";
+import { ProfileMenu } from "./components/ProfileMenu";
+import { Link, navigate, usePath } from "./components/nav";
+import { StatusDot } from "./components/StatusPill";
 import { Activity } from "./views/Activity";
-import { Connections } from "./views/Connections";
-import { Dashboard, type Route } from "./views/Dashboard";
-import { Guide } from "./views/Guide";
+import { ConnectionsOverview, ConnectorPage } from "./views/Connections";
+import { Dashboard } from "./views/Dashboard";
 import { Tokens } from "./views/Tokens";
 
-const ROUTES: { id: Route; label: string; hash: string }[] = [
-  { id: "dashboard", label: "Dashboard", hash: "#/" },
-  { id: "connections", label: "Connections", hash: "#/connections" },
-  { id: "tokens", label: "Tokens", hash: "#/tokens" },
-  { id: "activity", label: "Activity", hash: "#/activity" },
-  { id: "guide", label: "Guide", hash: "#/guide" },
-];
-
-function routeFromHash(): Route {
-  const h = location.hash.replace(/^#\/?/, "");
-  const found = ROUTES.find((r) => r.id === h);
-  return found ? found.id : "dashboard";
-}
-
-function initialTheme(): "light" | "dark" {
-  const saved = localStorage.getItem("ew-theme");
-  if (saved === "light" || saved === "dark") return saved;
+function resolveTheme(pref: ThemePref): "light" | "dark" {
+  if (pref === "light" || pref === "dark") return pref;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function storedTheme(): ThemePref {
+  const saved = localStorage.getItem("ew-theme");
+  return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+}
+
+function NotFound() {
+  return (
+    <div className="card">
+      <h3>Page not found</h3>
+      <p className="muted">That address doesn't match a page here.</p>
+      <p><Link href="/">Back to the dashboard</Link></p>
+    </div>
+  );
+}
+
 export function App() {
-  const [route, setRoute] = useState<Route>(() => routeFromHash());
+  const path = usePath();
   const [status, setStatus] = useState<StatusBody | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [needsGate, setNeedsGate] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [scrollTarget, setScrollTarget] = useState<string | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">(() => initialTheme());
+  const [theme, setThemeState] = useState<ThemePref>(() => storedTheme());
+  const [menuOpen, setMenuOpen] = useState(false);
 
+  // Apply theme live; "system" follows the OS and updates on change.
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("ew-theme", theme);
+    const apply = () => {
+      document.documentElement.dataset.theme = resolveTheme(theme);
+    };
+    apply();
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
-  useEffect(() => {
-    const onHash = () => setRoute(routeFromHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+  const setTheme = useCallback((t: ThemePref) => {
+    setThemeState(t);
+    localStorage.setItem("ew-theme", t);
+    void api("/api/preferences", { method: "PUT", body: JSON.stringify({ theme: t }) }).catch(() => undefined);
   }, []);
 
   const loadStatus = useCallback(async () => {
@@ -61,35 +71,39 @@ export function App() {
     setStatus(data);
   }, []);
 
-  useEffect(() => {
-    if (new URLSearchParams(location.search).get("connected")) {
-      history.replaceState(null, "", `${location.pathname}#/connections`);
-      setRoute("connections");
+  const loadMe = useCallback(async () => {
+    const { res, data } = await api<Me>("/api/me");
+    if (!res.ok) return;
+    setMe(data);
+    const serverTheme = data.preferences?.theme;
+    if (serverTheme === "light" || serverTheme === "dark" || serverTheme === "system") {
+      setThemeState(serverTheme);
+      localStorage.setItem("ew-theme", serverTheme);
     }
-    void loadStatus();
-  }, [loadStatus]);
-
-  const go = useCallback((next: Route, scrollToId?: string) => {
-    setScrollTarget(scrollToId ?? null);
-    const target = ROUTES.find((r) => r.id === next);
-    if (location.hash !== target?.hash) {
-      location.hash = target?.hash ?? "#/";
-    } else {
-      setRoute(next);
-    }
-    if (!scrollToId && next !== "connections") window.scrollTo({ top: 0 });
   }, []);
 
-  if (needsGate) return <Gate onUnlock={loadStatus} />;
+  useEffect(() => {
+    // Google OAuth returns to "/?connected=google" — land on the GSC page instead.
+    const params = new URLSearchParams(location.search);
+    if (params.get("connected") && location.pathname === "/") {
+      navigate("/connections/google-search-console?connected=google");
+    }
+    void loadStatus();
+    void loadMe();
+  }, [loadStatus, loadMe]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [path]);
+
+  if (needsGate) return <Gate onUnlock={() => { void loadStatus(); void loadMe(); }} />;
   if (loadError)
     return (
       <main className="gate-wrap">
         <div className="card">
           <h3>Something went wrong</h3>
           <p className="muted">{loadError}</p>
-          <button type="button" onClick={() => void loadStatus()}>
-            Retry
-          </button>
+          <button type="button" onClick={() => void loadStatus()}>Retry</button>
         </div>
       </main>
     );
@@ -100,38 +114,52 @@ export function App() {
       </main>
     );
 
+  const connectorMatch = path.match(/^\/connections\/([a-z0-9-]+)$/);
+  const connector = connectorMatch ? status.connectors.find((c) => c.id === connectorMatch[1]) : undefined;
+
+  let view: React.ReactNode;
+  if (path === "/") view = <Dashboard status={status} />;
+  else if (path === "/connections") view = <ConnectionsOverview status={status} />;
+  else if (connectorMatch && connector) view = <ConnectorPage connector={connector} all={status.connectors} refresh={loadStatus} />;
+  else if (path === "/tokens") view = <Tokens />;
+  else if (path === "/activity") view = <Activity />;
+  else view = <NotFound />;
+
+  const navLink = (href: string, label: string, active: boolean) => (
+    <Link key={href} href={href} className={active ? "nav-link nav-active" : "nav-link"}>{label}</Link>
+  );
+
   return (
     <div className="layout">
-      <aside className="sidebar">
-        <div className="brand">Edge Webmaster</div>
-        <nav className="nav">
-          {ROUTES.map((r) => (
-            <a
-              key={r.id}
-              href={r.hash}
-              className={route === r.id ? "nav-link nav-active" : "nav-link"}
-              onClick={() => {
-                if (r.id !== "connections") setScrollTarget(null);
-              }}
-            >
-              {r.label}
-            </a>
-          ))}
-        </nav>
-        <button
-          type="button"
-          className="ghost theme-toggle"
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        >
-          {theme === "dark" ? "Light theme" : "Dark theme"}
+      <div className="mobile-bar">
+        <span className="brand">Edge Webmaster</span>
+        <button type="button" className="ghost" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+          {menuOpen ? "Close" : "Menu"}
         </button>
+      </div>
+      <aside className={menuOpen ? "sidebar sidebar-open" : "sidebar"}>
+        <div className="brand sidebar-brand">Edge Webmaster</div>
+        <nav className="nav">
+          {navLink("/", "Dashboard", path === "/")}
+          <p className="nav-section">Connections</p>
+          {status.connectors.map((c) => (
+            <Link
+              key={c.id}
+              href={`/connections/${c.id}`}
+              className={path === `/connections/${c.id}` ? "nav-link nav-sub nav-active" : "nav-link nav-sub"}
+            >
+              <StatusDot status={c.status} />
+              <span>{c.name}</span>
+            </Link>
+          ))}
+          {navLink("/connections", "All connections", path === "/connections")}
+          {navLink("/tokens", "Agent Tokens", path === "/tokens")}
+          {navLink("/activity", "Activity", path === "/activity")}
+        </nav>
       </aside>
       <main className="main">
         <header className="topbar">
-          <span className="pill pill-off">Mode: {status.mode}</span>
-          <span className="small muted">
-            MCP URL: <code>{`${location.origin}/mcp`}</code>
-          </span>
+          <ProfileMenu me={me} theme={theme} setTheme={setTheme} />
         </header>
         {status.bootstrap_open && (
           <div className="card card-danger">
@@ -143,19 +171,13 @@ export function App() {
             </span>
           </div>
         )}
-        {route === "dashboard" && <Dashboard status={status} go={go} />}
-        {route === "connections" && (
-          <Connections status={status} refresh={loadStatus} scrollTarget={scrollTarget} />
-        )}
-        {route === "tokens" && <Tokens />}
-        {route === "activity" && <Activity />}
-        {route === "guide" && <Guide status={status} goConnections={() => go("connections")} />}
+        {view}
       </main>
     </div>
   );
 }
 
-function Gate({ onUnlock }: { onUnlock: () => Promise<void> }) {
+function Gate({ onUnlock }: { onUnlock: () => void }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -164,7 +186,7 @@ function Gate({ onUnlock }: { onUnlock: () => Promise<void> }) {
       method: "POST",
       body: JSON.stringify({ token }),
     });
-    if (res.ok) void onUnlock();
+    if (res.ok) onUnlock();
     else setError(errText(data, "Failed."));
   };
 
@@ -189,9 +211,7 @@ function Gate({ onUnlock }: { onUnlock: () => Promise<void> }) {
           }}
         />
         <div className="row">
-          <button type="button" onClick={() => void unlock()}>
-            Unlock setup
-          </button>
+          <button type="button" onClick={() => void unlock()}>Unlock setup</button>
         </div>
         {error && <div className="result result-bad">{error}</div>}
       </div>

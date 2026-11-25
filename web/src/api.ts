@@ -1,4 +1,11 @@
 export type ConnectorStatus = "not_connected" | "available" | "configured" | "connected" | "error";
+export type ThemePref = "light" | "dark" | "system";
+
+export interface Me {
+  email: string | null;
+  identity: "access" | "setup-token" | "open";
+  preferences: { theme: ThemePref };
+}
 
 export interface SetupField {
   key: string;
@@ -24,7 +31,7 @@ export interface Connector {
   status_detail: string;
   credentials_present: boolean;
   configured: boolean;
-  health: { ok: boolean; detail: string; count?: number } | null;
+  health: { ok: boolean; detail: string; count?: number | null } | null;
   setup_fields: SetupField[];
   tools: string[];
 }
@@ -89,4 +96,11 @@ export function errText(data: unknown, fallback: string): string {
     if (typeof e === "string" && e) return e;
   }
   return fallback;
+}
+
+/** Email-shaped substring in a status/health string, if the backend included one. */
+export function emailIn(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const m = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+  return m ? m[0] : null;
 }
