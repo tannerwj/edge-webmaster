@@ -29,13 +29,20 @@ export interface SetupField {
   help?: string;
 }
 
-export type ConnectionStatus = "not_connected" | "available" | "configured" | "connected" | "error";
+export type ConnectionStatus =
+  | "not_connected"
+  | "available"
+  | "configured"
+  | "connected"
+  | "error"
+  | "needs_sign_in";
 
 export type PackAccess = "Read-only" | "Read + write actions";
 
 export interface PackHealth {
   ok: boolean;
   detail: string;
+  secondary?: string;
   count?: number | null;
   items?: string[];
 }

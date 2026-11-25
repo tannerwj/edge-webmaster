@@ -1,6 +1,6 @@
 import { getCredential, putCredential } from "./creds";
 import type { Env } from "./registry";
-import { b64url, OpError, pemToBytes } from "./util";
+import { b64url, OpError, pemToBytes, sha256Hex } from "./util";
 
 export interface GoogleOAuthClient {
   client_id: string;
@@ -20,6 +20,63 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/webmasters",
   "https://www.googleapis.com/auth/analytics.readonly",
 ];
+
+export type GoogleAuthSource = "oauth" | "service_account";
+
+export interface GoogleConnectionState {
+  oauth_client_saved: boolean;
+  oauth_client_id_masked: string | null;
+  oauth_signed_in: boolean;
+  oauth_needs_sign_in: boolean;
+  service_account_saved: boolean;
+  service_account_email: string | null;
+  needs_sign_in: boolean;
+  active_method: GoogleAuthSource | null;
+}
+
+const GOOGLE_CLIENT_SUFFIX = ".apps.googleusercontent.com";
+
+export function maskGoogleClientId(id: string): string {
+  if (id.endsWith(GOOGLE_CLIENT_SUFFIX)) {
+    const prefix = id.slice(0, -GOOGLE_CLIENT_SUFFIX.length);
+    return `${prefix.slice(0, 4)}…apps.googleusercontent.com`;
+  }
+  if (id.length <= 4) return "…";
+  if (id.length <= 8) return `${id.slice(0, 2)}…`;
+  return `${id.slice(0, 4)}…${id.slice(-4)}`;
+}
+
+export async function googleAuthSource(env: Env): Promise<GoogleAuthSource | null> {
+  const [tokens, sa] = await Promise.all([
+    getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens"),
+    getCredential<GoogleServiceAccount>(env, "google_service_account"),
+  ]);
+  if (tokens?.refresh_token) return "oauth";
+  if (sa?.client_email) return "service_account";
+  return null;
+}
+
+export async function googleConnectionState(env: Env): Promise<GoogleConnectionState> {
+  const [client, tokens, sa] = await Promise.all([
+    getCredential<GoogleOAuthClient>(env, "google_oauth_client"),
+    getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens"),
+    getCredential<GoogleServiceAccount>(env, "google_service_account"),
+  ]);
+  const oauthClientSaved = Boolean(client?.client_id);
+  const oauthSignedIn = Boolean(tokens?.refresh_token);
+  const oauthNeedsSignIn = oauthClientSaved && !oauthSignedIn;
+  const serviceAccountSaved = Boolean(sa?.client_email);
+  return {
+    oauth_client_saved: oauthClientSaved,
+    oauth_client_id_masked: client?.client_id ? maskGoogleClientId(client.client_id) : null,
+    oauth_signed_in: oauthSignedIn,
+    oauth_needs_sign_in: oauthNeedsSignIn,
+    service_account_saved: serviceAccountSaved,
+    service_account_email: sa?.client_email ?? null,
+    needs_sign_in: oauthNeedsSignIn && !serviceAccountSaved,
+    active_method: oauthSignedIn ? "oauth" : serviceAccountSaved ? "service_account" : null,
+  };
+}
 
 export async function googleConfigured(env: Env): Promise<boolean> {
   const [tokens, sa] = await Promise.all([
@@ -73,11 +130,32 @@ export async function exchangeGoogleCode(env: Env, origin: string, code: string)
   };
   if (typeof data.access_token === "string") tokens.access_token = data.access_token;
   await putCredential(env, "google_oauth_tokens", tokens);
+  invalidateGoogleTokenCache();
 }
 
-let tokenCache: { token: string; expiresAt: number } | null = null;
+interface MintedToken {
+  token: string;
+  expiresIn: number;
+}
 
-async function refreshOAuthToken(env: Env): Promise<string> {
+let tokenCache: { token: string; expiresAt: number; fingerprint: string } | null = null;
+
+export function invalidateGoogleTokenCache(): void {
+  tokenCache = null;
+}
+
+const TOKEN_CACHE_SAFETY_SEC = 30;
+
+function cacheMinted(fingerprint: string, minted: MintedToken): string {
+  const adjustedSec = minted.expiresIn - TOKEN_CACHE_SAFETY_SEC;
+  tokenCache =
+    adjustedSec > 0
+      ? { token: minted.token, expiresAt: Date.now() + adjustedSec * 1000, fingerprint }
+      : null;
+  return minted.token;
+}
+
+async function refreshOAuthToken(env: Env): Promise<MintedToken> {
   const [client, tokens] = await Promise.all([
     getCredential<GoogleOAuthClient>(env, "google_oauth_client"),
     getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens"),
@@ -95,12 +173,13 @@ async function refreshOAuthToken(env: Env): Promise<string> {
   });
   const data = (await res.json()) as Record<string, unknown>;
   if (!res.ok || typeof data.access_token !== "string") {
-    throw new OpError(`Google token refresh failed (${res.status}). Reconnect Google in setup.`);
+    const code = typeof data.error === "string" ? `: ${data.error}` : "";
+    throw new OpError(`Google token refresh failed (${res.status})${code}. Reconnect Google in setup.`);
   }
-  return data.access_token;
+  return { token: data.access_token, expiresIn: Number(data.expires_in ?? 3600) };
 }
 
-async function serviceAccountToken(env: Env, sa: GoogleServiceAccount): Promise<string> {
+async function serviceAccountToken(env: Env, sa: GoogleServiceAccount): Promise<MintedToken> {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
   const claim = b64url(
@@ -137,24 +216,36 @@ async function serviceAccountToken(env: Env, sa: GoogleServiceAccount): Promise<
   });
   const data = (await res.json()) as Record<string, unknown>;
   if (!res.ok || typeof data.access_token !== "string") {
-    throw new OpError(`Google service-account token failed (${res.status}). Check the key and property access.`);
+    const code = typeof data.error === "string" ? `: ${data.error}` : "";
+    throw new OpError(
+      `Google service-account token failed (${res.status})${code}. Check the key and property access.`,
+    );
   }
-  return data.access_token;
+  return { token: data.access_token, expiresIn: Number(data.expires_in ?? 3600) };
 }
 
 export async function googleAccessToken(env: Env): Promise<string> {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) return tokenCache.token;
   const tokens = await getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens");
-  let token: string;
   if (tokens?.refresh_token) {
-    token = await refreshOAuthToken(env);
-  } else {
-    const sa = await getCredential<GoogleServiceAccount>(env, "google_service_account");
-    if (!sa?.client_email) throw new OpError("Google is not connected. Open setup and connect Google first.");
-    token = await serviceAccountToken(env, sa);
+    const client = await getCredential<GoogleOAuthClient>(env, "google_oauth_client");
+    if (client?.client_id && client?.client_secret) {
+      const fingerprint = await sha256Hex(
+        ["oauth", client.client_id, client.client_secret, tokens.refresh_token].join("\n"),
+      );
+      if (tokenCache && tokenCache.fingerprint === fingerprint && tokenCache.expiresAt > Date.now()) {
+        return tokenCache.token;
+      }
+      return cacheMinted(fingerprint, await refreshOAuthToken(env));
+    }
+    return (await refreshOAuthToken(env)).token;
   }
-  tokenCache = { token, expiresAt: Date.now() + 50 * 60_000 };
-  return token;
+  const sa = await getCredential<GoogleServiceAccount>(env, "google_service_account");
+  if (!sa?.client_email) throw new OpError("Google is not connected. Open setup and connect Google first.");
+  const fingerprint = await sha256Hex(["service_account", sa.client_email, sa.private_key].join("\n"));
+  if (tokenCache && tokenCache.fingerprint === fingerprint && tokenCache.expiresAt > Date.now()) {
+    return tokenCache.token;
+  }
+  return cacheMinted(fingerprint, await serviceAccountToken(env, sa));
 }
 
 export async function googleFetch(

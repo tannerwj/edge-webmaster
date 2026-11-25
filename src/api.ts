@@ -1,5 +1,15 @@
-import { deleteCredential, putCredential } from "./creds";
-import { googleAuthUrl, googleRedirectUri } from "./google";
+import { deleteCredential, getCredential, putCredential } from "./creds";
+import {
+  googleAuthSource,
+  googleAuthUrl,
+  googleConnectionState,
+  googleRedirectUri,
+  invalidateGoogleTokenCache,
+  maskGoogleClientId,
+  type GoogleAuthSource,
+  type GoogleOAuthClient,
+  type GoogleOAuthTokens,
+} from "./google";
 import { PACKS } from "./packs";
 import { getTheme, hasSetupSession, isTheme, resolveIdentity, sessionCookieValue, setTheme } from "./prefs";
 import { isActiveStatus, packStatus, packStatuses, type ConnectionStatus, type Env, type PackStatus } from "./registry";
@@ -93,84 +103,205 @@ async function dashboardSummary(env: Env, statuses: PackStatus[]) {
   };
 }
 
+export const GOOGLE_NEEDS_SIGN_IN_DETAIL = "Client saved — click Sign in with Google to finish connecting";
+
+interface MappedGoogleError {
+  human: string;
+  status: ConnectionStatus;
+  clearTokens: boolean;
+}
+
+export function mapGoogleError(raw: string, source: GoogleAuthSource | null): MappedGoogleError {
+  const lower = raw.toLowerCase();
+  if (source === "oauth" && lower.includes("invalid_client")) {
+    return {
+      human: "Google rejected the OAuth client ID or secret. Replace the saved client, then click Sign in with Google again.",
+      status: "error",
+      clearTokens: false,
+    };
+  }
+  if (
+    source === "oauth" &&
+    (lower.includes("google api 401") ||
+      lower.includes("invalid authentication credentials") ||
+      lower.includes("invalid_grant"))
+  ) {
+    return {
+      human: "Google rejected the stored sign-in token. Click Sign in with Google again to reconnect.",
+      status: "needs_sign_in",
+      clearTokens: true,
+    };
+  }
+  if (source === "service_account" && lower.includes("service-account token failed")) {
+    return {
+      human: "Google rejected the service account key. Re-upload the JSON key and confirm the service account has access to the property.",
+      status: "error",
+      clearTokens: false,
+    };
+  }
+  if (/quota|permission|forbidden|not been used|access denied/.test(lower)) {
+    return { human: raw, status: "error", clearTokens: false };
+  }
+  return {
+    human: "Google couldn't complete the test. Try again, or reconnect Google if it keeps failing.",
+    status: "error",
+    clearTokens: false,
+  };
+}
+
 async function statusBody(env: Env) {
   const statuses = await packStatuses(env, PACKS, { checkHealth: true });
   const summary = await dashboardSummary(env, statuses);
+  const googleState = await googleConnectionState(env);
   return {
     mode: env.MCP_MODE ?? "code",
     bootstrap_open: !env.SETUP_TOKEN,
     summary,
     dashboard: summary,
-    connectors: statuses.map((s) => ({
-      id: s.pack.id,
-      name: s.pack.name,
-      namespace: s.pack.namespace,
-      auth_type: s.pack.authType,
-      auth_label: s.pack.authLabel,
-      provider: s.pack.provider,
-      connection_id: s.pack.connectionId,
-      setup_kind: s.pack.setupKind,
-      access: s.pack.access,
-      description: s.pack.blurb,
-      blurb: s.pack.blurb,
-      examples: s.pack.examples,
-      recommendation: s.pack.recommendation,
-      status: s.status,
-      status_detail: s.statusDetail,
-      credentials_present: s.credentialsPresent,
-      configured: s.configured,
-      advertise: s.advertise,
-      has_access: s.hasAccess,
-      health: s.health,
-      checked: s.checked,
-      setup_fields: s.pack.setupFields,
-      tools: s.pack.tools.map((t) => t.name),
-    })),
+    connectors: statuses.map((s) => {
+      const isGoogle = s.pack.connectionId === "google";
+      let status: ConnectionStatus = s.status;
+      let statusDetail = s.statusDetail;
+      let configured = s.configured;
+      let health = s.health;
+      if (isGoogle && googleState.needs_sign_in) {
+        status = "needs_sign_in";
+        statusDetail = GOOGLE_NEEDS_SIGN_IN_DETAIL;
+        configured = true;
+        health = null;
+      } else if (isGoogle && status === "error" && health) {
+        const mapped = mapGoogleError(health.detail, googleState.active_method);
+        statusDetail = mapped.human;
+        health = { ...health, detail: mapped.human, secondary: health.detail };
+      }
+      return {
+        id: s.pack.id,
+        name: s.pack.name,
+        namespace: s.pack.namespace,
+        auth_type: s.pack.authType,
+        auth_label: s.pack.authLabel,
+        provider: s.pack.provider,
+        connection_id: s.pack.connectionId,
+        setup_kind: s.pack.setupKind,
+        access: s.pack.access,
+        description: s.pack.blurb,
+        blurb: s.pack.blurb,
+        examples: s.pack.examples,
+        recommendation: s.pack.recommendation,
+        status,
+        status_detail: statusDetail,
+        credentials_present: s.credentialsPresent,
+        configured,
+        advertise: s.advertise,
+        has_access: s.hasAccess,
+        health,
+        checked: s.checked,
+        setup_fields: s.pack.setupFields,
+        tools: s.pack.tools.map((t) => t.name),
+        ...(isGoogle ? { google_connection: googleState } : {}),
+      };
+    }),
   };
+}
+
+async function googleTestFailure(env: Env, raw: string): Promise<Response> {
+  const mapped = mapGoogleError(raw, await googleAuthSource(env));
+  if (mapped.clearTokens) {
+    await deleteCredential(env, "google_oauth_tokens");
+    invalidateGoogleTokenCache();
+  }
+  const health = { ok: false, detail: mapped.human, secondary: raw };
+  return json({
+    ok: false,
+    detail: mapped.human,
+    detail_secondary: raw,
+    status: mapped.status,
+    status_detail: mapped.human,
+    health,
+  });
 }
 
 async function testConnector(env: Env, id: string): Promise<Response> {
   const pack = PACKS.find((p) => p.id === id);
   if (!pack) return json({ error: "Unknown connector." }, 404);
+  const isGoogle = pack.connectionId === "google";
+  if (isGoogle && (await googleConnectionState(env)).needs_sign_in) {
+    return json({
+      ok: false,
+      detail: GOOGLE_NEEDS_SIGN_IN_DETAIL,
+      status: "needs_sign_in" as ConnectionStatus,
+      status_detail: GOOGLE_NEEDS_SIGN_IN_DETAIL,
+      needs_sign_in: true,
+    });
+  }
   const base = await packStatus(env, pack);
   if (base.status === "not_connected")
     return json({ ok: false, detail: "Not configured yet.", status: base.status as ConnectionStatus });
   try {
     const health = await pack.health(env);
+    if (isGoogle && !health.ok) return googleTestFailure(env, health.detail);
     const status: ConnectionStatus = !health.ok ? "error" : base.credentialsPresent ? "connected" : "available";
     return json({ ...health, status, status_detail: health.detail, health });
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
+    if (isGoogle) return googleTestFailure(env, detail);
     return json({ ok: false, detail, status: "error" as ConnectionStatus, status_detail: detail });
   }
 }
 
+async function saveGoogleOAuthClient(env: Env, body: Record<string, unknown>): Promise<Response | null> {
+  const reqClientId = str(body.client_id).trim();
+  const reqClientSecret = str(body.client_secret).trim();
+  if (!reqClientId && !reqClientSecret) return null;
+  const stored = await getCredential<GoogleOAuthClient>(env, "google_oauth_client");
+  const merged: GoogleOAuthClient = {
+    client_id: reqClientId || (stored?.client_id ?? "").trim(),
+    client_secret: reqClientSecret || stored?.client_secret || "",
+  };
+  if (!merged.client_id || !merged.client_secret) {
+    return json({ error: "Provide both the Google OAuth client ID and client secret." }, 400);
+  }
+  if (stored?.client_id && stored.client_id !== merged.client_id) {
+    await deleteCredential(env, "google_oauth_tokens");
+  }
+  await putCredential(env, "google_oauth_client", merged);
+  invalidateGoogleTokenCache();
+  const tokens = await getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens");
+  return json({
+    ok: true,
+    saved: "oauth_client",
+    client_id_masked: maskGoogleClientId(merged.client_id),
+    needs_sign_in: !tokens?.refresh_token,
+  });
+}
+
+async function saveGoogleServiceAccount(env: Env, body: Record<string, unknown>): Promise<Response | null> {
+  if (!str(body.service_account_json)) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(str(body.service_account_json)) as Record<string, unknown>;
+  } catch {
+    return json({ error: "Service account JSON did not parse." }, 400);
+  }
+  if (!str(parsed.client_email) || !str(parsed.private_key)) {
+    return json({ error: "Service account JSON needs client_email and private_key." }, 400);
+  }
+  await putCredential(env, "google_service_account", {
+    client_email: str(parsed.client_email),
+    private_key: str(parsed.private_key),
+  });
+  invalidateGoogleTokenCache();
+  return json({ ok: true, saved: "service_account", service_account_email: str(parsed.client_email) });
+}
+
+async function configureGoogleConnector(env: Env, body: Record<string, unknown>): Promise<Response> {
+  const saved = (await saveGoogleOAuthClient(env, body)) ?? (await saveGoogleServiceAccount(env, body));
+  return saved ?? json({ error: "Provide client_id + client_secret, or service_account_json." }, 400);
+}
+
 async function configureConnector(env: Env, id: string, body: Record<string, unknown>): Promise<Response> {
   if (id === "google-search-console" || id === "google-analytics") {
-    if (str(body.client_id) || str(body.client_secret)) {
-      await putCredential(env, "google_oauth_client", {
-        client_id: str(body.client_id),
-        client_secret: str(body.client_secret),
-      });
-      return json({ ok: true, saved: "oauth_client" });
-    }
-    if (str(body.service_account_json)) {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(str(body.service_account_json)) as Record<string, unknown>;
-      } catch {
-        return json({ error: "Service account JSON did not parse." }, 400);
-      }
-      if (!str(parsed.client_email) || !str(parsed.private_key)) {
-        return json({ error: "Service account JSON needs client_email and private_key." }, 400);
-      }
-      await putCredential(env, "google_service_account", {
-        client_email: str(parsed.client_email),
-        private_key: str(parsed.private_key),
-      });
-      return json({ ok: true, saved: "service_account" });
-    }
-    return json({ error: "Provide client_id + client_secret, or service_account_json." }, 400);
+    return configureGoogleConnector(env, body);
   }
   if (id === "bing-webmaster") {
     await putCredential(env, "bing", { api_key: str(body.api_key) });
@@ -188,6 +319,7 @@ async function disconnectConnector(env: Env, id: string): Promise<Response> {
     await deleteCredential(env, "google_oauth_tokens");
     await deleteCredential(env, "google_service_account");
     await deleteCredential(env, "google_oauth_client");
+    invalidateGoogleTokenCache();
   } else if (id === "bing-webmaster") {
     await deleteCredential(env, "bing");
   } else if (id === "pagespeed-crux") {
@@ -223,13 +355,38 @@ async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: s
   if (path === "/api/me" && req.method === "GET") return me(req, env);
   if (path === "/api/preferences" && req.method === "PUT") return updatePreferences(req, env);
   if (path === "/api/logout" && req.method === "POST") return logout();
-  if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
+  const google = await routeGoogleAdmin(req, env, ctx, path, url);
+  if (google) return google;
   if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
   const connector = await routeConnectors(req, env, ctx, path);
   if (connector) return connector;
   const tokens = await routeTokens(req, env, ctx, path);
   if (tokens) return tokens;
   return json({ error: "Not found." }, 404);
+}
+
+async function routeGoogleAdmin(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  path: string,
+  url: URL,
+): Promise<Response | null> {
+  if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
+  if (path === "/api/google/oauth-client" && req.method === "DELETE") {
+    await deleteCredential(env, "google_oauth_client");
+    await deleteCredential(env, "google_oauth_tokens");
+    invalidateGoogleTokenCache();
+    if (ctx) audit(ctx, env, "setup-ui", "google.oauth_client.clear", "google");
+    return json({ ok: true });
+  }
+  if (path === "/api/google/service-account" && req.method === "DELETE") {
+    await deleteCredential(env, "google_service_account");
+    invalidateGoogleTokenCache();
+    if (ctx) audit(ctx, env, "setup-ui", "google.service_account.clear", "google");
+    return json({ ok: true });
+  }
+  return null;
 }
 
 async function me(req: Request, env: Env): Promise<Response> {
