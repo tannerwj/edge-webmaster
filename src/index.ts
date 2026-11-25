@@ -1,7 +1,7 @@
 import { handleApi, handleGoogleCallback, handleSetupAgentDoc } from "./api";
 import { handleMcp, VERSION } from "./mcp";
 import type { Env } from "./registry";
-import { UI_HTML } from "./frontend.gen";
+import { UI_HTML, UI_SCRIPT_HASH } from "./frontend.gen";
 
 import { publicInfo } from "../web/public-info";
 
@@ -12,7 +12,7 @@ const SECURITY_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-frame-options": "DENY",
   "content-security-policy":
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+    `default-src 'self'; script-src '${UI_SCRIPT_HASH}'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'`,
 };
 
 function withHeaders(res: Response): Response {
@@ -39,7 +39,7 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     let res: Response;
-    if (path === "/about" || path.startsWith("/about/")) {
+    if (path === "/favicon.ico" || path === "/apple-touch-icon.png" || path === "/about" || path.startsWith("/about/")) {
       res = publicInfo(path, req.method);
     } else if (path === "/mcp" || path === "/mcp/" || path === "/mcp/token") {
       res = await handleMcp(req, env, ctx);
@@ -63,7 +63,7 @@ export default {
     } else if (path === "/setup-agent.md") {
       res = await handleSetupAgentDoc(req, env);
     } else if ((req.method === "GET" || req.method === "HEAD") && isSpaPath(path)) {
-      res = new Response(UI_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+      res = new Response(req.method === "HEAD" ? null : UI_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     } else {
       res = new Response("Not found", { status: 404 });
     }

@@ -155,12 +155,7 @@ function cacheMinted(fingerprint: string, minted: MintedToken): string {
   return minted.token;
 }
 
-async function refreshOAuthToken(env: Env): Promise<MintedToken> {
-  const [client, tokens] = await Promise.all([
-    getCredential<GoogleOAuthClient>(env, "google_oauth_client"),
-    getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens"),
-  ]);
-  if (!client || !tokens?.refresh_token) throw new OpError("Google OAuth is not connected.");
+async function refreshOAuthToken(client: GoogleOAuthClient, tokens: GoogleOAuthTokens): Promise<MintedToken> {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -228,16 +223,14 @@ export async function googleAccessToken(env: Env): Promise<string> {
   const tokens = await getCredential<GoogleOAuthTokens>(env, "google_oauth_tokens");
   if (tokens?.refresh_token) {
     const client = await getCredential<GoogleOAuthClient>(env, "google_oauth_client");
-    if (client?.client_id && client?.client_secret) {
-      const fingerprint = await sha256Hex(
-        ["oauth", client.client_id, client.client_secret, tokens.refresh_token].join("\n"),
-      );
-      if (tokenCache && tokenCache.fingerprint === fingerprint && tokenCache.expiresAt > Date.now()) {
-        return tokenCache.token;
-      }
-      return cacheMinted(fingerprint, await refreshOAuthToken(env));
+    if (!client?.client_id || !client.client_secret) throw new OpError("Google OAuth is not connected.");
+    const fingerprint = await sha256Hex(
+      ["oauth", client.client_id, client.client_secret, tokens.refresh_token].join("\n"),
+    );
+    if (tokenCache && tokenCache.fingerprint === fingerprint && tokenCache.expiresAt > Date.now()) {
+      return tokenCache.token;
     }
-    return (await refreshOAuthToken(env)).token;
+    return cacheMinted(fingerprint, await refreshOAuthToken(client, tokens));
   }
   const sa = await getCredential<GoogleServiceAccount>(env, "google_service_account");
   if (!sa?.client_email) throw new OpError("Google is not connected. Open setup and connect Google first.");
@@ -252,8 +245,9 @@ export async function googleFetch(
   env: Env,
   url: string,
   init: RequestInit = {},
+  accessToken?: string,
 ): Promise<Record<string, unknown>> {
-  const token = await googleAccessToken(env);
+  const token = accessToken ?? await googleAccessToken(env);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
   headers.set("content-type", "application/json");

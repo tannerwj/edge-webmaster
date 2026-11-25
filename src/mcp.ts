@@ -5,7 +5,7 @@ import { toolDeclarations } from "./registry";
 import { EXECUTE_WALL_SECONDS, runExecute } from "./sandbox";
 import { accessEmail } from "./access";
 import { authenticateAgentToken, touchToken, trackCall, type AgentToken } from "./store";
-import { isRecord, OpError, str } from "./util";
+import { json, isRecord, OpError, str } from "./util";
 
 export const VERSION = "0.1.0";
 const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -21,13 +21,6 @@ interface RpcBody {
   id: RpcId | undefined;
   method: string;
   params: Record<string, unknown>;
-}
-
-function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
 }
 
 function rpcError(id: RpcId, code: number, message: string, status = 200): Response {

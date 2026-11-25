@@ -64,11 +64,28 @@ export function Reports({ connectors }: { connectors: Connector[] }) {
   const [ns, setNs] = useState(() => reports.find((r) => connectors.some((c) => c.namespace === r.ns && c.configured))?.ns ?? "gsc");
   const report = reports.find((r) => r.ns === ns)!;
   const connector = connectors.find((c) => c.namespace === ns);
-  return <div><h1>Site reports</h1><section className="card">
-    <label htmlFor="report">Report</label>
-    <select id="report" value={ns} onChange={(e) => setNs(e.target.value)}>
-      {reports.map((r) => <option key={r.ns} value={r.ns}>{r.label}</option>)}
-    </select>
-    {connector && <ReportForm key={ns} report={report} connector={connector} />}
-  </section></div>;
+  return <div><h1>Site reports</h1>
+    <div className="report-layout">
+      <label className="mobile-report-picker">Choose a report
+        <select value={ns} onChange={e => setNs(e.target.value)}>
+          {reports.map(r => <option key={r.ns} value={r.ns}>{r.label}</option>)}
+        </select>
+      </label>
+      <fieldset className="report-picker">
+        <legend>Choose a report</legend>
+        {reports.map((r) => {
+          const provider = connectors.find((c) => c.namespace === r.ns);
+          const ready = provider?.configured && provider.tools.includes(r.tool);
+          return <label className="report-option" key={r.ns}>
+            <input type="radio" name="report" checked={ns === r.ns} onChange={() => setNs(r.ns)} />
+            <span><strong>{r.label}</strong><small>{ready ? provider.name : "Setup required"}</small></span>
+          </label>;
+        })}
+      </fieldset>
+      <section className="card report-panel" aria-label={report.label}>
+        <h2>{report.label}</h2>
+        {connector && <ReportForm key={ns} report={report} connector={connector} />}
+      </section>
+    </div>
+  </div>;
 }

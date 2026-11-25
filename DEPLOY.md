@@ -11,11 +11,11 @@ For manual installation, run `npm ci`, create a D1 database with `npx wrangler d
 
 ## Give an agent access
 
-**Scoped token.** In **Agent access**, choose a name and read or write access. For a personal assistant, leave **All connectors and properties** selected. For a project, choose the connectors and optionally enter exact property identifiers from that provider. Use the full Search Console property (including `sc-domain:` or the URL prefix), the verified Bing URL, or a numeric GA4 property ID. PageSpeed tests public URLs and supports connector-level selection. Property-limited tokens see their assigned identifiers in tool descriptions. Account-wide discovery operations are hidden for those connectors. Copy the token once and configure the client with the endpoint and header shown.
+**Scoped token.** In **Agent access → Agent tokens**, choose a name and read or write access. For a personal assistant, leave **All connectors and properties** selected. For a project, choose the connectors and optionally enter exact property identifiers from that provider. Use the full Search Console property (including `sc-domain:` or the URL prefix), the verified Bing URL, or a numeric GA4 property ID. PageSpeed tests public URLs and supports connector-level selection. Property-limited tokens see their assigned identifiers in tool descriptions. Account-wide discovery operations are hidden for those connectors. Copy the token once and configure the client with the endpoint and header shown.
 
 ### Browser sign-in with managed OAuth
 
-The deploy button installs the Worker and database in your account. Open **Agent access** on your installation for the interactive checklist. Set up Access once for each hostname. You need a Cloudflare Zero Trust team, an allowed login method and a domain you control in the account.
+The deploy button installs the Worker and database in your account. Open **Agent access → Cloudflare Access → Configure Access for this installation** for the interactive checklist. Set up Access once for each hostname. You need a Cloudflare Zero Trust team, an allowed login method and a domain you control in the account.
 
 1. **Attach your hostname.** In Workers & Pages → your Worker → Settings → Domains & Routes, add a Custom Domain, such as `webmaster.example.com`. Open the dashboard there. Use that origin for provider OAuth callbacks too.
 2. **Protect the dashboard.** In Zero Trust → Access controls → Applications → Add an application → Self-hosted, add the entire hostname. Select your identity provider and an **Allow** policy limited to administrator emails or a trusted admin group. Save its Application Audience (AUD) Tag.

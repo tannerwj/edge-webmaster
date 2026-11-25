@@ -4,6 +4,13 @@
   "check": {
     "gates": ["lint", "abc", "tsc", "deadcode", "secrets", "cycles", "dupes", "todos", "ratchet"]
   },
+  "size": {
+    "budgets": [
+      { "label": "SPA JS (all chunks, gzip)", "dir": "web/dist/assets", "match": "\\.js$", "max": 286720 },
+      { "label": "SPA largest JS chunk (gzip)", "dir": "web/dist/assets", "match": "\\.js$", "max": 266240, "mode": "largest" },
+      { "label": "SPA CSS (gzip)", "dir": "web/dist/assets", "match": "\\.css$", "max": 20480 }
+    ]
+  },
   "roots": ["src", "scripts"],
   "tsc": { "projects": ["tsconfig.json", "web/tsconfig.json"] },
   "exclude": ["\\.d\\.ts$", "\\.test\\.tsx?$", "frontend\\.gen\\.ts$"],

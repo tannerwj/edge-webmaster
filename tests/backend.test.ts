@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -105,8 +106,20 @@ describe("SPA fallback routing", () => {
     const res = await call(env(), "/settings/profile", { method: "HEAD" });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.body).toBeNull();
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("authorizes the exact shipped dashboard script", async () => {
+    const res = await call(env(), "/reports");
+    const html = await res.text();
+    const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    const hash = createHash("sha256").update(script!).digest("base64");
+    const directive = res.headers.get("content-security-policy")?.split(";").find(s => s.trim().startsWith("script-src"));
+    expect(directive).toContain(`'sha256-${hash}'`);
+    expect(directive).not.toContain("'unsafe-inline'");
   });
 
   it("keeps unknown /api paths as JSON 404, not the shell", async () => {
@@ -125,7 +138,7 @@ describe("SPA fallback routing", () => {
   });
 
   it("404s static-looking asset paths and non-GET unknown paths", async () => {
-    for (const path of ["/favicon.ico", "/assets/main.js", "/robots.txt", "/styles.css"]) {
+    for (const path of ["/missing-icon.ico", "/assets/main.js", "/robots.txt", "/styles.css"]) {
       const res = await call(env(), path);
       expect(res.status).toBe(404);
       expect(res.headers.get("content-type")).not.toContain("text/html");
@@ -288,4 +301,13 @@ describe("IndexNow ownership and URL submissions", () => {
     expect(await result.json()).toMatchObject({ status: 202, submitted: 1 });
     expect(upstream).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it.each([{ body: null }, { body: [] }, { body: "not an object" }])("rejects non-object token requests before issuing a token (%j)", async ({ body }) => {
+  const env = makeEnv(new FakeD1(), { SETUP_TOKEN });
+  const cookie = await loginCookie(env);
+  const res = await call(env, "/api/tokens", jsonInit("POST", body, { cookie }));
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({ error: "Expected a JSON object." });
 });

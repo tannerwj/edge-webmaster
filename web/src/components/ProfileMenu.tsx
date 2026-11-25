@@ -26,13 +26,17 @@ export function ProfileMenu({
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+        ref.current?.querySelector("button")?.focus();
+      }
     };
     document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
     };
   }, [open ]);
 
@@ -52,7 +56,7 @@ export function ProfileMenu({
         onClick={() => setOpen((o) => !o)}
       >
         <span className="profile-label">{label}</span>
-        <span aria-hidden="true">▾</span>
+        <span aria-hidden="true">▴</span>
       </button>
       {open && (
         <div className="profile-menu" role="menu">

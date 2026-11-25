@@ -28,14 +28,16 @@ export function AccessSetup({ configured }: { configured: boolean }) {
     setBusy(true);
     try {
       await checkDiscovery(origin);
-      setStatus(configured ? "Access discovery passed. Connect your client below." : "Access discovery passed. Finish the Worker variables in step 3.");
+      setStatus(configured ? "Access discovery passed. Your client can now discover this server." : "Access discovery passed. Finish the Worker variables in step 3.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not check Access discovery.");
     } finally { setBusy(false); }
   }
   return <section className="card">
-    <h2>Connect through Cloudflare Access</h2>
-    <p>Agents sign in with your identity provider and can read all connected properties. Use a scoped token below for a smaller grant.</p>
+    <h2>Connect your client</h2>
+    <p>Add a remote HTTP MCP server in your agent, paste this endpoint and select OAuth.</p>
+    <div className="agent-endpoint"><code>{endpoint}</code><CopyButton value={endpoint} label="Copy URL" /></div>
+    <p className="small muted">After signing in, open <a href="/reports">Site reports</a> and use <strong>Copy task for agent</strong> to try a report.</p>
     <details open={!configured}>
       <summary>Configure Access for this installation</summary>
       <ol>
@@ -48,11 +50,8 @@ export function AccessSetup({ configured }: { configured: boolean }) {
           <li><code>ACCESS_ADMIN_AUD</code> = dashboard AUD</li><li><code>ACCESS_MCP_AUD</code> = agent AUD</li></ul>
           Reload this page on the custom domain. For scoped tokens alongside OAuth, see the <a href="https://github.com/tannerwj/edge-webmaster/blob/master/DEPLOY.md#give-an-agent-access">path-specific setup and rollback guide</a>.</li>
       </ol>
-    </details>
     <button type="button" disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check Access discovery"}</button>
     <p role="status">{status}</p>
-    <p>Add this URL as a remote HTTP MCP server, choose OAuth, and approve your client in the browser.</p>
-    <code>{endpoint}</code> <CopyButton value={endpoint} />
-    <p>Run a report in <a href="/reports">Site reports</a>, then use <strong>Copy task for agent</strong> to request the same report in your client.</p>
+    </details>
   </section>;
 }

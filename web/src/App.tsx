@@ -1,5 +1,6 @@
+import { WorkspaceMark, NavIcon } from "./components/WorkspaceMark";
 import { Reports } from "./views/Reports";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, type Me, type StatusBody, type ThemePref } from "./api";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { Link, navigate, usePath } from "./components/nav";
@@ -36,6 +37,15 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [theme, setThemeState] = useState<ThemePref>(() => storedTheme());
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const menuButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const desktop = window.matchMedia("(min-width: 761px)");
+    const closeOnResize = () => { if (desktop.matches) setMenuOpen(false); };
+    desktop.addEventListener("change", closeOnResize);
+    return () => desktop.removeEventListener("change", closeOnResize);
+  }, [menuOpen]);
 
   // Apply theme live; "system" follows the OS and updates on change.
   useEffect(() => {
@@ -127,31 +137,37 @@ export function App() {
   else view = <NotFound />;
 
   const navLink = (href: string, label: string, active: boolean) => (
-    <Link key={href} href={href} className={active ? "nav-link nav-active" : "nav-link"}>{label}</Link>
+    <Link key={href} href={href} onClick={() => setMenuOpen(false)} aria-current={active ? "page" : undefined} className={active ? "nav-link nav-active" : "nav-link"}><NavIcon href={href} />{label}</Link>
   );
 
   return (
     <div className="layout">
       <div className="mobile-bar">
-        <span className="brand">Edge Webmaster</span>
-        <button type="button" className="ghost" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+        <Link href="/" onClick={() => setMenuOpen(false)} className="brand"><WorkspaceMark />Edge Webmaster</Link>
+        <button ref={menuButton} type="button" className="ghost" aria-controls="workspace-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
           {menuOpen ? "Close" : "Menu"}
         </button>
       </div>
-      <aside className={menuOpen ? "sidebar sidebar-open" : "sidebar"}>
-        <div className="brand sidebar-brand">Edge Webmaster</div>
-        <nav className="nav">
+      <aside onKeyDown={e => {
+        if (e.key === "Escape" && menuOpen && !e.defaultPrevented) {
+          setMenuOpen(false);
+          menuButton.current?.focus();
+        }
+      }} id="workspace-navigation" className={menuOpen ? "sidebar sidebar-open" : "sidebar"}>
+        <Link href="/" className="brand sidebar-brand"><WorkspaceMark />Edge Webmaster</Link>
+        <nav className="nav" aria-label="Workspace">
           {navLink("/", "Dashboard", path === "/")}
           {navLink("/reports", "Site reports", path === "/reports")}
           {navLink("/connections", "Connections", path.startsWith("/connections"))}
           {navLink("/tokens", "Agent access", path === "/tokens")}
           {navLink("/activity", "Activity", path === "/activity")}
         </nav>
-      </aside>
-      <main className="main">
-        <header className="topbar">
+        <div className="sidebar-account">
+          <span className="workspace-host">{location.hostname}</span>
           <ProfileMenu me={me} theme={theme} setTheme={setTheme} />
-        </header>
+        </div>
+      </aside>
+      <main className="main" inert={menuOpen}>
         {view}
       </main>
     </div>
@@ -172,13 +188,12 @@ function Gate({ onUnlock }: { onUnlock: () => void }) {
   };
 
   return (
-    <main className="gate-wrap">
-      <h1>Edge Webmaster</h1>
+    <main className="gate-wrap login">
+      <div className="brand"><WorkspaceMark />Edge Webmaster</div>
       <div className="card">
-        <h3>Setup access</h3>
+        <h1>Open your workspace</h1>
         <p className="small muted">
-          This deployment is protected. Sign in through Cloudflare Access, or enter the setup token
-          you set at deploy time.
+          Enter the setup token from your Cloudflare deployment to manage connections and run site reports.
         </p>
         <label htmlFor="gate-token">Setup token</label>
         <input

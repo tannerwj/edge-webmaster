@@ -1,5 +1,5 @@
 import { cacheGet, cachePut } from "../creds";
-import { googleConfigured, googleFetch } from "../google";
+import { googleAccessToken, googleConfigured, googleFetch } from "../google";
 import { obj, SITE_URL, type ConnectorPack, type ToolCtx } from "../registry";
 import { clampInt, isRecord, OpError, str, strList } from "../util";
 
@@ -17,18 +17,21 @@ export function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
-async function queryAnalytics(ctx: ToolCtx, args: Record<string, unknown>) {
+async function queryAnalytics(ctx: ToolCtx, args: Record<string, unknown>, accessToken?: string) {
   const site = str(args.site_url);
   if (!site) throw new OpError("site_url is required.");
   const rowLimit = clampInt(args.row_limit, 1, MAX_ROWS, 1000);
-  const cacheKey = `gsc:${JSON.stringify(args)}`;
+  const token = accessToken ?? await googleAccessToken(ctx.env);
+  const startDate = str(args.start_date) || isoDaysAgo(30);
+  const endDate = str(args.end_date) || isoDaysAgo(2);
+  const cacheKey = JSON.stringify(["gsc", token, startDate, endDate, args]);
   const cached = await cacheGet(ctx.env, cacheKey);
   if (cached) return { ...JSON.parse(cached), cached: true };
   const rows: unknown[] = [];
   for (const startRow of planPages(rowLimit)) {
     const body: Record<string, unknown> = {
-      startDate: str(args.start_date) || isoDaysAgo(30),
-      endDate: str(args.end_date) || isoDaysAgo(2),
+      startDate,
+      endDate,
       dimensions: strList(args.dimensions),
       type: str(args.search_type) || "web",
       rowLimit: Math.min(PAGE, rowLimit - startRow),
@@ -42,6 +45,7 @@ async function queryAnalytics(ctx: ToolCtx, args: Record<string, unknown>) {
       ctx.env,
       `${API}/sites/${encodeURIComponent(site)}/searchAnalytics/query`,
       { method: "POST", body: JSON.stringify(body) },
+      token,
     );
     const page = Array.isArray(data.rows) ? data.rows : [];
     rows.push(...page);
@@ -71,6 +75,7 @@ function totals(rows: unknown[]): { clicks: number; impressions: number; ctr: nu
 }
 
 async function performanceReview(ctx: ToolCtx, args: Record<string, unknown>) {
+  const token = await googleAccessToken(ctx.env);
   const days = clampInt(args.days, 7, 90, 28);
   const base = { site_url: args.site_url, row_limit: 25 };
   const currentRange = { start_date: isoDaysAgo(days + 1), end_date: isoDaysAgo(2) };
@@ -78,18 +83,18 @@ async function performanceReview(ctx: ToolCtx, args: Record<string, unknown>) {
     ...base,
     ...currentRange,
     dimensions: [],
-  });
+  }, token);
   const previous = await queryAnalytics(ctx, {
     ...base,
     start_date: isoDaysAgo(days * 2 + 1),
     end_date: isoDaysAgo(days + 2),
     dimensions: [],
-  });
-  const topQueries = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["query"], row_limit: 10 });
-  const topPages = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["page"], row_limit: 10 });
+  }, token);
+  const topQueries = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["query"], row_limit: 10 }, token);
+  const topPages = await queryAnalytics(ctx, { ...base, ...currentRange, dimensions: ["page"], row_limit: 10 }, token);
   const sitemaps = await googleFetch(
     ctx.env,
-    `${API}/sites/${encodeURIComponent(str(args.site_url))}/sitemaps`,
+    `${API}/sites/${encodeURIComponent(str(args.site_url))}/sitemaps`, {}, token,
   );
   const cur = totals((current as { rows: unknown[] }).rows);
   const prev = totals((previous as { rows: unknown[] }).rows);

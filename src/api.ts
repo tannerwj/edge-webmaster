@@ -17,25 +17,11 @@ import { PACKS } from "./packs";
 import { type Identity, getTheme, isTheme, resolveIdentity, sessionCookieValue, setTheme } from "./prefs";
 import { isActiveStatus, packStatus, packStatuses, type ConnectionStatus, type Env, type PackStatus } from "./registry";
 import { audit, createAgentToken, listAgentTokens, revokeAgentToken } from "./store";
-import { isRecord, nowSec, OpError, randomToken, str, timingSafeEqual } from "./util";
+import { json, readObject, isRecord, nowSec, OpError, randomToken, str, timingSafeEqual } from "./util";
 
-function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
-}
-
-interface NextStep {
-  id: string;
-  title: string;
-  body: string;
-  action_target: string;
-}
-
-function nextStep(statuses: PackStatus[], activeTokens: number): NextStep | null {
+function nextStep(statuses: PackStatus[], activeTokens: number) {
   const byId = new Map(statuses.map((s) => [s.pack.id, s.status]));
-  const step = (id: string, title: string, body: string, action_target: string): NextStep => ({
+  const step = (id: string, title: string, body: string, action_target: string) => ({
     id,
     title,
     body,
@@ -270,13 +256,13 @@ async function saveGoogleOAuthClient(env: Env, body: Record<string, unknown>): P
 
 async function saveGoogleServiceAccount(env: Env, body: Record<string, unknown>): Promise<Response | null> {
   if (!str(body.service_account_json)) return null;
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(str(body.service_account_json)) as Record<string, unknown>;
+    parsed = JSON.parse(str(body.service_account_json));
   } catch {
     return json({ error: "Service account JSON did not parse." }, 400);
   }
-  if (!str(parsed.client_email) || !str(parsed.private_key)) {
+  if (!isRecord(parsed) || !str(parsed.client_email) || !str(parsed.private_key)) {
     return json({ error: "Service account JSON needs client_email and private_key." }, 400);
   }
   await putCredential(env, "google_service_account", {
@@ -337,7 +323,8 @@ export async function handleApi(req: Request, env: Env, ctx: ExecutionContext, p
 }
 
 async function login(req: Request, env: Env): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const body = await readObject(req);
+  if (body instanceof Response) return body;
   if (!env.SETUP_TOKEN || !timingSafeEqual(str(body.token), env.SETUP_TOKEN)) {
     return json({ error: "That setup token did not match." }, 401);
   }
@@ -400,7 +387,8 @@ async function routeGoogleAdmin(
 }
 
 async function updatePreferences(req: Request, env: Env, identity: Identity): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const body = await readObject(req);
+  if (body instanceof Response) return body;
   const theme = body.theme;
   if (!isTheme(theme)) return json({ error: "theme must be one of: light, dark, system." }, 400);
   await setTheme(env, identity.key, theme);
@@ -449,13 +437,14 @@ If sign-in fails, check the token or create a replacement at ${origin}/tokens.
 
 async function oauthUrl(env: Env, url: URL): Promise<Response> {
   const state = randomToken("st_");
-  await env.DB.prepare(
-    "INSERT INTO settings (key, value, updated_at) VALUES ('oauth_state', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-  )
-    .bind(state, nowSec())
-    .run();
   try {
-    return json({ url: await googleAuthUrl(env, url.origin, state), redirect_uri: googleRedirectUri(env, url.origin) });
+    const authorizationUrl = await googleAuthUrl(env, url.origin, state);
+    const now = nowSec();
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM settings WHERE key GLOB 'oauth_state:*' AND updated_at < ?1").bind(now - 900),
+      env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)").bind(`oauth_state:${state}`, state, now),
+    ]);
+    return json({ url: authorizationUrl, redirect_uri: googleRedirectUri(env, url.origin) });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
@@ -463,8 +452,8 @@ async function oauthUrl(env: Env, url: URL): Promise<Response> {
 
 async function routeConnectors(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response | null> {
   if (req.method === "POST" && ["/api/connectors/indexnow/configure", "/api/connectors/indexnow/submit"].includes(path)) {
-    const body: unknown = await req.json().catch(() => null);
-    if (!isRecord(body)) return json({ error: "Expected a JSON object." }, 400);
+    const body = await readObject(req);
+    if (body instanceof Response) return body;
     try {
       const submit = path.endsWith("/submit");
       const result = await (submit ? submitIndexNow : configureIndexNow)(env, body);
@@ -475,7 +464,8 @@ async function routeConnectors(req: Request, env: Env, ctx: ExecutionContext, pa
   const action = path.match(/^\/api\/connectors\/([a-z-]+)\/(configure|test)$/);
   if (action && req.method === "POST") {
     if (action[2] === "test") return testConnector(env, action[1] ?? "");
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = await readObject(req);
+    if (body instanceof Response) return body;
     const res = await configureConnector(env, action[1] ?? "", body);
     if (res.ok) audit(ctx, env, "setup-ui", "connector.configure", action[1] ?? "");
     return res;
@@ -492,7 +482,8 @@ async function routeConnectors(req: Request, env: Env, ctx: ExecutionContext, pa
 async function routeTokens(req: Request, env: Env, ctx: ExecutionContext, path: string): Promise<Response | null> {
   if (path === "/api/tokens" && req.method === "GET") return json({ tokens: await listAgentTokens(env) });
   if (path === "/api/tokens" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = await readObject(req);
+    if (body instanceof Response) return body;
     const name = str(body.name) || "agent";
     const scope = str(body.scope) === "write" ? "write" : "read";
     const grants = body.grants ?? null;
@@ -524,7 +515,8 @@ async function metrics(env: Env): Promise<Record<string, unknown>> {
 }
 
 async function handleFeedback(req: Request, env: Env): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const body = await readObject(req);
+  if (body instanceof Response) return body;
   const message = str(body.message).slice(0, 4000);
   if (!message) return json({ error: "message is required." }, 400);
   const role = str(body.role) || "user";
@@ -543,9 +535,10 @@ export async function handleGoogleCallback(req: Request, env: Env): Promise<Resp
   const url = new URL(req.url);
   const code = url.searchParams.get("code") ?? "";
   const state = url.searchParams.get("state") ?? "";
-  const row = await env.DB.prepare("SELECT value, updated_at FROM settings WHERE key = 'oauth_state'")
-    .first<{ value: string; updated_at: number }>();
-  if (!row || !timingSafeEqual(row.value, state) || row.updated_at < nowSec() - 900) {
+  const claimed = await env.DB.prepare(
+    "DELETE FROM settings WHERE key IN (?1, 'oauth_state') AND value = ?2 AND updated_at >= ?3 RETURNING key",
+  ).bind(`oauth_state:${state}`, state, nowSec() - 900).first();
+  if (!claimed) {
     return new Response("OAuth state mismatch or expired. Return to setup and try again.", { status: 400 });
   }
   const { exchangeGoogleCode } = await import("./google");
@@ -554,7 +547,6 @@ export async function handleGoogleCallback(req: Request, env: Env): Promise<Resp
   } catch (e) {
     return new Response(`Google sign-in failed: ${e instanceof OpError ? e.message : "unknown error"}`, { status: 400 });
   }
-  await env.DB.prepare("DELETE FROM settings WHERE key = 'oauth_state'").run();
   return new Response(null, {
     status: 302,
     headers: { location: "/connections/google-search-console?connected=google" },

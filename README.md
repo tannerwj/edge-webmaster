@@ -1,89 +1,63 @@
 # Edge Webmaster
 
-A free, open-source, **self-hosted MCP server** that gives AI agents access to
-your webmaster tools — Google Search Console, Google Analytics 4, Bing
-Webmaster Tools, PageSpeed Insights / CrUX, and IndexNow — from one Cloudflare Worker
-that runs in **your own** Cloudflare account.
-
-No hosted shim holds your credentials. You deploy it, you connect your own
-Google and Bing accounts in its dashboard, and your agents (Muse, Claude
-Code, Grok, any MCP client) talk to *your* instance through Cloudflare Access or with a scoped token you issue.
-
-Part of the Edge family: [Edge IDP](https://github.com/tannerwj/edge-idp) ·
-[Edge Mail](https://github.com/tannerwj/edge-mail).
-
-## Why code mode?
-
-A flat MCP catalog for all platforms would be dozens of tools in every
-agent's context. Edge Webmaster defaults to **code mode**: agents see exactly
-two tools —
-
-- `search_tools` — search the catalog of the connectors you actually connected
-- `execute` — run one JavaScript snippet in an isolated sandbox against typed
-  proxies (`gsc`, `ga4`, `bing`, `pagespeed`, `indexnow`), chaining calls and filtering in
-  code; only the return value comes back
-
-Connectors that aren't set up don't advertise tools at all — no dead ends for
-the agent. Prefer the classic catalog? Set `MCP_MODE=raw` and every connected
-tool is listed directly.
-
-## Deploy your own
+Run webmaster reports in your browser and give your AI agents access to the same tools. Edge Webmaster runs in your own Cloudflare account. You choose which providers to connect and which sites each agent can use.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tannerwj/edge-webmaster)
 
-1. Choose a Workers Paid account, your repository and D1 database. Supply two random secrets from your password manager, `DEPLOYMENT_SECRET` and `SETUP_TOKEN`. Keep the suggested build and deploy commands. Code mode uses billable Dynamic Workers. [Cloudflare pricing](https://developers.cloudflare.com/dynamic-workers/pricing/)
-2. Open your Worker, unlock the dashboard, and connect the providers you use. Google sign-in covers Search Console and GA4. Bing uses a Webmaster API key. PageSpeed can test public URLs immediately. Add a Google API key for CrUX real-user reports.
-3. Open **Site reports** to run a Google query report, a GA4 channel report, a Bing query report or a mobile PageSpeed test. Select a property or enter its identifier. **Copy task for agent** carries the selected report and property into your agent.
-4. Open **Agent access → Configure Access for this installation**. The wizard walks you through your hostname, administrator and agent sign-in policies, Managed OAuth, client callbacks, and the four Worker variables. Click **Check Access discovery**, add the displayed URL to your agent and sign in.
-5. Paste the task from **Site reports** into your agent. A managed OAuth login reads all connected properties. For per-site permissions, create a scoped token and use the separate token endpoint. [Access setup and troubleshooting](DEPLOY.md#give-an-agent-access)
+**Before you deploy:** You’ll need a GitHub account, a Cloudflare Workers Paid account for code mode, and a password manager for two secrets. Cloudflare bills usage to your account. [Cloudflare pricing](https://developers.cloudflare.com/dynamic-workers/pricing/)
 
-## What's inside
+![Edge Webmaster dashboard showing connected tools, agent activity and the next setup step, using sample data](docs/dashboard.jpg)
 
-| Connector | Tools |
-| --- | --- |
-| Google Search Console (`gsc`) | list/get sites, search analytics with bounded pagination, list/get/submit sitemaps, URL inspection, batch inspection, performance review composite |
-| Google Analytics 4 (`ga4`) | list properties, metadata, reports, realtime reports, period comparison |
-| Bing Webmaster (`bing`) | list sites, query stats, page stats, traffic stats, crawl issues |
-| PageSpeed + CrUX (`pagespeed`) | PageSpeed runs (mobile/desktop), CrUX record and history |
-| IndexNow (`indexnow`) | verify a site key file and notify participating search engines of changed URLs |
+## Run your first report
 
-Plus an MCP prompt (`performance_review`), per-tool call metrics and an audit
-log in D1, AES-GCM-wrapped credential storage, and a feedback endpoint
-(`POST /api/feedback`) so users and agents can report problems to the
-maintainer of a deployment.
+1. Click **Deploy to Cloudflare** above. Choose your repository, Worker name and D1 database. Keep the suggested build and deploy commands.
+2. Generate two independent random 32-byte secrets. Save both in your password manager. The Worker uses `DEPLOYMENT_SECRET` to encrypt provider credentials and `SETUP_TOKEN` to unlock the dashboard.
+3. Open **your new Worker URL** and enter the setup token. Under **Site reports**, choose **Mobile page speed**, enter a public page URL and click **Run report**. If Google’s shared quota is exhausted, the PageSpeed setup guide walks you through adding your own API key.
+4. Open **Connections** when you’re ready to use your own data. Choose a provider, follow its setup guide, and use **Test connection** to see which properties it can access.
 
-## Project structure
+For manual installation, provider credentials, upgrades and rollback, see the [deployment guide](DEPLOY.md).
 
-```
-src/            Worker: MCP server, admin API, credential store
-  packs/        Connector packs (gsc, ga4, bing, pagespeed)
-web/            React dashboard (Dashboard, Connections, Agent Tokens, Activity)
-scripts/        build-frontend.mjs — builds web/ into src/frontend.gen.ts
-tests/          Vitest suites plus the scripted e2e probe (tests/e2e/probe.mjs)
-migrations/     D1 schema migrations
-DEPLOY.md       Full deploy guide: D1, secrets, Cloudflare Access, staging
-```
+## Choose what to connect
 
-## Develop
+| Provider | What you can do | What you need |
+| --- | --- | --- |
+| Google Search Console | See search queries, clicks and impressions, inspect URLs, and manage sitemaps | Google sign-in or a service account with access to your property |
+| Google Analytics 4 | Report on traffic channels, compare periods and query realtime data | The same Google connection, with access to a GA4 property |
+| Bing Webmaster Tools | Review search queries, page traffic and crawl issues | Bing Webmaster API key and a verified site |
+| PageSpeed Insights and CrUX | Run mobile or desktop lab tests and look up real-user performance and history | Public URL for a lab test. A Google API key and sufficient traffic for CrUX |
+| IndexNow | Notify participating search engines when URLs change | A verification key file hosted on each site you submit |
 
-```bash
-npm install
-export SETUP_TOKEN=local-development-only  # disposable localhost fixture
-# For real provider credentials, inject private runtime secrets from your password manager.
-npx wrangler d1 migrations apply edge-webmaster --local
-npm run dev -- --var "SETUP_TOKEN:$SETUP_TOKEN"  # localhost only
-npm test                  # unit + mocked-upstream pack tests
-npm run probe             # scripted probes against the dev server (see tests/e2e/probe.mjs)
-npm run check             # abacus gates: lint, abc, tsc, deadcode, secrets, cycles, dupes, todos, ratchet
-```
+## Connect an agent
 
-Verify changes on the staging twin before they reach production:
+Open **Agent access** in your dashboard and choose how the agent should authenticate.
 
-```bash
-npm run deploy:staging    # staging worker + its own D1 and Access apps
-npm run deploy:prod       # production, once staging checks out
+| Choose | When to use it | How to connect |
+| --- | --- | --- |
+| **Cloudflare Access** | Your agent can read reports across all connected properties | Expand **Configure Access for this installation** to set up your custom hostname and login policy. Check discovery, copy the `/mcp` URL into an OAuth-capable MCP client, and sign in. |
+| **Agent tokens** | You want to restrict an agent to certain tools or sites, enable writes, or use a client that accepts bearer tokens | Name the token, choose permissions and connectors, then create it. Save the token when it appears. Under **Connect your client**, copy the setup snippet for your client. It uses `/mcp/token`. |
+
+In **Site reports**, choose a report and property, then click **Copy task for agent**. Paste it into the connected client to run the same report there. Code mode exposes two MCP tools: `search_tools` discovers available operations, and `execute` runs JavaScript against the permitted connectors. Set `MCP_MODE=raw` to list operations directly. [Agent setup and troubleshooting](DEPLOY.md#give-an-agent-access)
+
+## Local development
+
+Use Node.js 24. From the repository root:
+
+```sh
+npm ci
+npm run build
+npx wrangler d1 migrations apply DB --local --env=""
+npm run dev -- --local --env="" --var SETUP_TOKEN:local-development-only
 ```
 
-## License
+Open the localhost URL printed by Wrangler and unlock it with `local-development-only`. After changing the dashboard, run `npm run build` to regenerate the HTML served by the Worker.
 
-MIT — see [LICENSE](LICENSE). The source is freely licensed. Cloudflare usage is billed to the deploying account.
+```sh
+npm run typecheck
+npm test
+npm run gates -- --with-size
+npm run test:e2e
+```
+
+The end-to-end suite creates a disposable local Worker and D1 database. Set `CHROME_BIN` to your Chrome executable to include desktop and mobile browser checks.
+
+[Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)

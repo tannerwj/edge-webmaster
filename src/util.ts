@@ -75,3 +75,13 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 export class OpError extends Error {}
+
+
+export function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return Response.json(body, { status, headers });
+}
+
+export async function readObject(req: Request): Promise<Record<string, unknown> | Response> {
+  const body: unknown = await req.json().catch(() => null);
+  return isRecord(body) ? body : json({ error: "Expected a JSON object." }, 400);
+}

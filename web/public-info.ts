@@ -1,3 +1,5 @@
+import { ICONS } from "../src/frontend.gen";
+
 const pages = new Map([
   ["/about", {
     title: "Edge Webmaster",
@@ -14,10 +16,20 @@ const pages = new Map([
 ]);
 
 export function publicInfo(path: string, method: string): Response {
+  const iconPath = path.replace(/^\/about\//, "/");
+  if (Object.hasOwn(ICONS, iconPath)) {
+    if (method !== "GET" && method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+    return new Response(method === "HEAD" ? null : Uint8Array.from(atob(ICONS[iconPath]!), c => c.charCodeAt(0)), {
+      headers: { "content-type": path.endsWith(".ico") ? "image/x-icon" : "image/png", "cache-control": "public, max-age=86400" },
+    });
+  }
   const page = pages.get(path);
   if (!page) return new Response("Not found", { status: 404 });
   if (method !== "GET" && method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${page.title} · Edge Webmaster</title>
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="/about/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/about/apple-touch-icon.png">
+<meta name="theme-color" content="#142c27">
+<title>${page.title} · Edge Webmaster</title>
 <style>html{color-scheme:light dark}body{max-width:42rem;margin:auto;padding:clamp(1rem,5vw,4rem);font:1.1rem/1.65 system-ui,sans-serif}h1,h2{line-height:1.2}h1{margin-top:2em}h2{font-size:1.25em;margin-top:2em}nav{display:flex;gap:1.4rem;flex-wrap:wrap;border-bottom:1px solid #8994;padding-bottom:1rem}a{color:LinkText;text-underline-offset:.2em}</style>
 <nav aria-label="Information"><a href="/about">Edge Webmaster</a><a href="/about/privacy">Privacy policy</a><a href="/about/terms">Terms of service</a></nav><main><h1>${page.title}</h1>${page.body}</main></html>`;
   return new Response(method === "HEAD" ? null : html, { headers: { "content-type": "text/html; charset=utf-8" } });
