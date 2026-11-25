@@ -3,6 +3,7 @@ import { useState } from "react";
 export interface TestOutcome {
   ok: boolean;
   detail: string;
+  secondary?: string;
   items?: string[];
 }
 
@@ -64,6 +65,7 @@ export function TestConnectionButton({
             {outcome.detail}
           </p>
         )}
+        {outcome?.secondary && <p className="small muted result-secondary">{outcome.secondary}</p>}
         {outcome?.items && outcome.items.length > 0 && <OutcomeItems items={outcome.items} />}
         {lastTestedAt && (
           <p className="small muted">Last tested {lastTestedAt.toLocaleTimeString()}</p>

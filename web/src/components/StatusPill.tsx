@@ -6,6 +6,7 @@ const LABELS: Record<ConnectorStatus, string> = {
   configured: "Saved — not verified",
   not_connected: "Not connected",
   error: "Error",
+  needs_sign_in: "Sign-in needed",
 };
 
 const CLASSES: Record<ConnectorStatus, string> = {
@@ -14,6 +15,7 @@ const CLASSES: Record<ConnectorStatus, string> = {
   configured: "pill pill-warn",
   not_connected: "pill pill-off",
   error: "pill pill-bad",
+  needs_sign_in: "pill pill-warn",
 };
 
 /** Shared status → dot color: connected green, available blue, configured amber, error red, not_connected gray. */
@@ -23,6 +25,7 @@ export const STATUS_DOT: Record<ConnectorStatus, string> = {
   configured: "dot-configured",
   not_connected: "dot-off",
   error: "dot-error",
+  needs_sign_in: "dot-configured",
 };
 
 export function StatusPill({ status }: { status: ConnectorStatus }) {

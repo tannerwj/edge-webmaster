@@ -1,4 +1,15 @@
-export type ConnectorStatus = "not_connected" | "available" | "configured" | "connected" | "error";
+export type ConnectorStatus = "not_connected" | "available" | "configured" | "connected" | "error" | "needs_sign_in";
+
+export interface GoogleConnection {
+  oauth_client_saved: boolean;
+  oauth_client_id_masked: string | null;
+  oauth_signed_in: boolean;
+  oauth_needs_sign_in: boolean;
+  service_account_saved: boolean;
+  service_account_email: string | null;
+  needs_sign_in: boolean;
+  active_method: "oauth" | "service_account" | null;
+}
 export type ThemePref = "light" | "dark" | "system";
 
 export interface Me {
@@ -32,6 +43,7 @@ export interface Connector {
   credentials_present: boolean;
   configured: boolean;
   health: { ok: boolean; detail: string; count?: number | null } | null;
+  google_connection?: GoogleConnection | null;
   setup_fields: SetupField[];
   tools: string[];
 }

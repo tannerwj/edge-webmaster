@@ -39,37 +39,48 @@ The setup UI can connect accounts and mint agent tokens, so protect it:
 ## 3. Connect Google
 
 Use the setup wizard's Google card. You need your **own** Google Cloud
-project — there is no shared OAuth client, by design. Pick one of three
-paths:
+project — there is no shared OAuth client, by design. Pick one of two
+methods in the wizard:
 
-**Service account — recommended for sites you own.** No consent screen and
-no token expiry. Create a service account in your Google Cloud project,
-download its JSON key, paste it into the wizard, and add the service account
-email as a user on each Search Console property and GA4 property it should
-read.
+**OAuth sign-in (External) — recommended for your own sites.** The
+connection acts as your Google account, so every Search Console and GA4
+property you can already open works immediately, with no per-property
+grants. Follow the wizard's seven steps:
 
-**OAuth, Internal.** Only available when your Google Cloud project belongs
-to a Google Workspace organization, and only for accounts inside that
-organization. A personal @gmail.com account cannot use Internal — the option
-simply does not appear. If your project is in a Workspace org and every
-account you will sign in with belongs to it, this is the low-maintenance
-OAuth path.
+1. Create a Google Cloud project.
+2. Enable the APIs: Google Search Console API, Google Analytics Data API,
+   Google Analytics Admin API.
+3. Set up the OAuth consent screen at
+   <https://console.cloud.google.com/auth/audience>. If this is the
+   project's first time, start at
+   <https://console.cloud.google.com/auth/overview> → Get started; enter an
+   app name, your user support email, and a developer contact email. At
+   Audience choose **External** — Internal only appears for Google Workspace
+   organizations, and only accounts inside that organization can use it, so
+   personal Google accounts cannot pick it. Then either:
+   - **Publish app** so the app is In production (recommended for your own
+     long-lived connection). No verification submission is needed for
+     personal use; Google shows a one-time "unverified app" warning when
+     you connect — choose Advanced → proceed.
+   - Or stay in Testing and add your own email under Test users. Warning:
+     in Testing, Google expires refresh tokens after 7 days, so the
+     connection will need re-connecting weekly.
+4. Create the OAuth client at <https://console.cloud.google.com/auth/clients>:
+   Create client → Web application; under Authorized redirect URIs click
+   Add URI and paste the redirect URI the wizard displays
+   (`https://<your-instance>/auth/google/callback`); then Create and copy
+   the Client ID and secret Google shows.
+5. Paste the Client ID and secret into the wizard and Save. The wizard then
+   shows the saved client (with a masked ID) at the top of the OAuth flow.
+6. Click **Sign in with Google** and approve access.
+7. Test the connection in the wizard — success lists the properties the
+   connection can see.
 
-**OAuth, External.** The path for personal accounts:
-
-1. Create a project in Google Cloud Console.
-2. Enable: Google Search Console API, Google Analytics Data API, Google
-   Analytics Admin API.
-3. Configure the OAuth consent screen as External.
-4. Create an OAuth client (Web application) with the redirect URI the wizard
-   displays (`https://<your-instance>/auth/google/callback`).
-5. **Publish the app (In production).** Do not leave it in Testing — Google
-   expires refresh tokens issued to Testing apps after 7 days, so the
-   connection would silently die a week later. Publishing for personal use
-   does not require a verification submission; expect a one-time
-   "unverified app" warning when you connect (choose Advanced → proceed).
-6. Paste the client ID/secret into the wizard, save, and press
-   **Connect Google**.
+**Service account — headless / team setups.** No sign-in and no token
+expiry, but you grant access by hand per property. Create a service account
+in your Google Cloud project, download its JSON key, paste it into the
+wizard, and add the service account email as a user on each Search Console
+property and GA4 property it should read.
 
 ## 4. Issue agent tokens and connect clients
 

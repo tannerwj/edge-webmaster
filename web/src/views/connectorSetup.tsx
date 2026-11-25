@@ -7,21 +7,29 @@ import { TestConnectionButton, type TestOutcome } from "../components/TestConnec
 export type TestResult = TestOutcome;
 
 export async function runTest(id: string): Promise<TestResult> {
-  const { data } = await api<{ ok?: boolean; detail?: string; items?: unknown }>(`/api/connectors/${id}/test`, {
-    method: "POST",
-    body: "{}",
-  });
+  const { data } = await api<{ ok?: boolean; detail?: string; detail_secondary?: string; items?: unknown }>(
+    `/api/connectors/${id}/test`,
+    { method: "POST", body: "{}" },
+  );
   const items = Array.isArray(data.items) ? data.items.filter((i): i is string => typeof i === "string") : undefined;
-  return { ok: Boolean(data.ok), detail: data.detail ?? "", ...(items ? { items } : {}) };
+  return {
+    ok: Boolean(data.ok),
+    detail: data.detail ?? "",
+    ...(data.detail_secondary ? { secondary: data.detail_secondary } : {}),
+    ...(items ? { items } : {}),
+  };
 }
 
 export function ResultLine({ result }: { result: TestResult | string | null }) {
   if (result === null) return null;
   if (typeof result === "string") return <div className="result">{result}</div>;
   return (
-    <div className={`result ${result.ok ? "result-ok" : "result-bad"}`}>
-      {result.ok ? "✓ " : "✗ "}
-      {result.detail}
+    <div>
+      <div className={`result ${result.ok ? "result-ok" : "result-bad"}`}>
+        {result.ok ? "✓ " : "✗ "}
+        {result.detail}
+      </div>
+      {result.secondary && <p className="small muted result-secondary">{result.secondary}</p>}
     </div>
   );
 }
@@ -62,7 +70,11 @@ export function GoogleSetup({
   refresh: () => void;
   onTest: () => Promise<TestResult>;
 }) {
-  const [tab, setTab] = useState<"sa" | "oauth">("sa");
+  const gc = packs.find((p) => p.google_connection)?.google_connection ?? null;
+  const saOnly = Boolean(gc?.service_account_saved && !gc.oauth_client_saved && !gc.oauth_signed_in);
+  const [method, setMethod] = useState<"oauth" | "sa">(() => (saOnly ? "sa" : "oauth"));
+  const [replaceClient, setReplaceClient] = useState(false);
+  const [replaceSa, setReplaceSa] = useState(false);
   const [saJson, setSaJson] = useState("");
   const [saEmail, setSaEmail] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
@@ -70,10 +82,15 @@ export function GoogleSetup({
   const [redirectUri, setRedirectUri] = useState("");
   const [result, setResult] = useState<TestResult | string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const fromStatus =
     emailIn(packs.map((p) => `${p.status_detail} ${p.health?.detail ?? ""}`).join(" ")) ?? null;
-  const shownEmail = saEmail ?? fromStatus;
+  const shownEmail = gc?.service_account_email ?? saEmail ?? fromStatus;
+  const clientSaved = Boolean(gc?.oauth_client_saved);
+  const showClientForm = !clientSaved || replaceClient;
+  const saSaved = Boolean(gc?.service_account_saved);
+  const showSaForm = !saSaved || replaceSa;
 
   useEffect(() => {
     let cancelled = false;
@@ -103,8 +120,13 @@ export function GoogleSetup({
       body: JSON.stringify({ service_account_json: saJson }),
     });
     setSaving(false);
-    setResult(res.ok ? "Service account saved. Give it access (step 6), then test." : errText(data, "Save failed."));
-    if (res.ok) refresh();
+    if (res.ok) {
+      setReplaceSa(false);
+      setResult("Service account saved. Give it access (step 6), then test.");
+      refresh();
+    } else {
+      setResult(errText(data, "Save failed."));
+    }
   };
 
   const saveClient = async () => {
@@ -114,7 +136,40 @@ export function GoogleSetup({
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
     });
     setSaving(false);
-    setResult(res.ok ? "Client saved. Now press Connect Google in the last step." : errText(data, "Save failed."));
+    if (res.ok) {
+      setReplaceClient(false);
+      setClientSecret("");
+      setResult("Client saved — now click Sign in with Google (step 6).");
+      refresh();
+    } else {
+      setResult(errText(data, "Save failed."));
+    }
+  };
+
+  const clearClient = async () => {
+    setClearing(true);
+    const { res, data } = await api("/api/google/oauth-client", { method: "DELETE" });
+    setClearing(false);
+    if (res.ok) {
+      setReplaceClient(false);
+      setResult("OAuth client cleared.");
+      refresh();
+    } else {
+      setResult(errText(data, "Clear failed."));
+    }
+  };
+
+  const clearSa = async () => {
+    setClearing(true);
+    const { res, data } = await api("/api/google/service-account", { method: "DELETE" });
+    setClearing(false);
+    if (res.ok) {
+      setReplaceSa(false);
+      setResult("Service account cleared.");
+      refresh();
+    } else {
+      setResult(errText(data, "Clear failed."));
+    }
   };
 
   const connect = async () => {
@@ -137,15 +192,17 @@ export function GoogleSetup({
     },
     {
       title: "Add the JSON key",
-      instruction: "Paste the full contents of the downloaded .json file — or choose/drop the file here — then Save.",
-      content: (
+      instruction: saSaved && !replaceSa
+        ? "A service account is already saved — see the panel above. Use Replace there to paste a different key."
+        : "Paste the full contents of the downloaded .json file — or choose/drop the file here — then Save.",
+      content: showSaForm ? (
         <div>
           <JsonCredentialField id="g-sa" label="Service account JSON key" value={saJson} onChange={onSaChange} placeholder='{"type":"service_account","client_email":"…","private_key":"…"}' />
           <div className="row">
             <button type="button" onClick={() => void saveSa()} disabled={saving || !saJson.trim()}>Save service account</button>
           </div>
         </div>
-      ),
+      ) : undefined,
     },
     {
       title: "Grant access in Google (one-time, per property)",
@@ -168,7 +225,7 @@ export function GoogleSetup({
           </p>
           <ul className="examples small">
             <li>
-              Many sites? Use the OAuth sign-in tab instead — it acts as your own Google account, so every
+              Many sites? Use the OAuth sign-in option instead — it acts as your own Google account, so every
               property you already have access to works immediately, with zero per-property grants.
             </li>
             <li>
@@ -190,26 +247,46 @@ export function GoogleSetup({
     PROJECT_STEP,
     APIS_STEP,
     {
-      title: "Configure consent",
-      instruction:
-        "APIs & Services → OAuth consent screen. Internal: Workspace org only — personal @gmail.com accounts won't see this option. External: pick it for personal accounts, then Publish the app (In production) — Testing expires refresh tokens in 7 days. Expect a one-time unverified-app warning: Advanced → proceed.",
-      links: [{ label: "Open credentials", href: "https://console.cloud.google.com/apis/credentials" }],
+      title: "Set up the OAuth consent screen",
+      instruction: "Configure who can sign in and how the app appears to Google:",
+      links: [
+        { label: "Open OAuth consent screen (Audience)", href: "https://console.cloud.google.com/auth/audience" },
+        { label: "Open OAuth overview (first-time setup)", href: "https://console.cloud.google.com/auth/overview" },
+      ],
+      content: (
+        <ul className="examples">
+          <li>First time in this project? Start at Overview → Get started.</li>
+          <li>Enter an app name, your user support email, and a developer contact email.</li>
+          <li>
+            At Audience, choose External. Internal only appears for Google Workspace organizations, and only
+            accounts inside that organization can use it — personal Google accounts need External.
+          </li>
+          <li>
+            Recommended: click Publish app so the app is In production. This is the setting for a long-lived
+            connection for your own sites; no verification submission is needed for personal use. When you
+            connect, Google shows a one-time “unverified app” warning — choose Advanced → proceed.
+          </li>
+          <li>
+            Or stay in Testing and add your own email under Test users. Warning: in Testing, Google expires
+            refresh tokens after 7 days, so the connection will need re-connecting weekly.
+          </li>
+        </ul>
+      ),
     },
     {
       title: "Create the OAuth client",
-      instruction: "Click Create credentials → OAuth client ID → Web application.",
-      links: [{ label: "Open credentials", href: "https://console.cloud.google.com/apis/credentials" }],
-    },
-    {
-      title: "Paste this redirect URI",
-      instruction: "In the new client, under Authorized redirect URIs, click Add URI and paste this exactly.",
+      instruction:
+        "Click Create client → Web application. Under Authorized redirect URIs, click Add URI and paste the redirect URI below exactly. Then click Create and copy the Client ID and secret Google shows.",
+      links: [{ label: "Open OAuth clients", href: "https://console.cloud.google.com/auth/clients" }],
       copyValue: redirectUri || undefined,
       copyLabel: "Copy redirect URI",
     },
     {
       title: "Save the client here",
-      instruction: "Copy the Client ID and Client secret from the client you just created, paste them here, then Save.",
-      content: (
+      instruction: clientSaved && !replaceClient
+        ? "A client is already saved — see the panel above. Use Replace there to paste different values."
+        : "Copy the Client ID and Client secret from the client you just created, paste them here, then Save.",
+      content: showClientForm ? (
         <div>
           <label htmlFor="g-id">OAuth Client ID</label>
           <input id="g-id" autoComplete="off" value={clientId} onChange={(e) => setClientId(e.target.value)} />
@@ -219,30 +296,104 @@ export function GoogleSetup({
             <button type="button" className="ghost" onClick={() => void saveClient()} disabled={saving}>Save client</button>
           </div>
         </div>
-      ),
+      ) : undefined,
     },
     {
-      title: "Connect Google",
-      instruction: "Sign in with the Google account that owns your properties and approve access.",
+      title: "Sign in with Google",
+      instruction: gc?.oauth_signed_in
+        ? "This connection is signed in with Google. Reconnect only if you changed the client or Google revoked access."
+        : "Sign in with the Google account that owns your properties and approve access.",
       content: (
-        <div className="row">
-          <button type="button" onClick={() => void connect()}>Connect Google</button>
+        <div>
+          <div className="row">
+            <button type="button" onClick={() => void connect()}>
+              {gc?.oauth_signed_in ? "Reconnect Google" : "Sign in with Google"}
+            </button>
+          </div>
+          {gc?.oauth_signed_in && <p className="small muted">Signed in with Google.</p>}
         </div>
       ),
     },
+    {
+      title: "Test the connection",
+      instruction: "Run the test. Success shows how many properties the connection can see.",
+      content: <TestStepContent onTest={onTest} successHint="Success lists the properties the connection can see — a property count greater than zero, with the property names shown." />,
+    },
   ];
+
+  const oauthPanel = clientSaved ? (
+    <div className="saved-panel">
+      <p className="saved-panel-title">
+        Client saved — ID {gc?.oauth_client_id_masked ?? "…"}
+      </p>
+      <p className="small muted">{gc?.oauth_signed_in ? "Signed in with Google." : "Not signed in yet."}</p>
+      {gc?.oauth_needs_sign_in && (
+        <button type="button" className="btn-block" onClick={() => void connect()}>
+          Sign in with Google
+        </button>
+      )}
+      <div className="row">
+        <button type="button" className="ghost btn-small" onClick={() => setReplaceClient(true)} disabled={replaceClient}>
+          Replace
+        </button>
+        <button type="button" className="danger btn-small" onClick={() => void clearClient()} disabled={clearing}>
+          Clear
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const saPanel = saSaved ? (
+    <div className="saved-panel">
+      <p className="saved-panel-title">Service account saved — {gc?.service_account_email ?? shownEmail ?? ""}</p>
+      <div className="row">
+        <button type="button" className="ghost btn-small" onClick={() => setReplaceSa(true)} disabled={replaceSa}>
+          Replace
+        </button>
+        <button type="button" className="danger btn-small" onClick={() => void clearSa()} disabled={clearing}>
+          Clear
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div>
-      <div className="segmented setup-tabs" role="group" aria-label="Google setup method">
-        <button type="button" className={tab === "sa" ? "seg seg-active" : "seg"} aria-pressed={tab === "sa"} onClick={() => setTab("sa")}>
-          Service account (recommended)
+      <div className="method-cards" role="group" aria-label="Google setup method">
+        <button
+          type="button"
+          className={method === "oauth" ? "method-card method-card-active" : "method-card"}
+          aria-pressed={method === "oauth"}
+          onClick={() => setMethod("oauth")}
+        >
+          <span className="method-card-title">OAuth sign-in — Recommended for your own sites</span>
+          <span className="method-card-body">
+            Acts as your Google account; every property you can already open just works.
+          </span>
         </button>
-        <button type="button" className={tab === "oauth" ? "seg seg-active" : "seg"} aria-pressed={tab === "oauth"} onClick={() => setTab("oauth")}>
-          OAuth sign-in
+        <button
+          type="button"
+          className={method === "sa" ? "method-card method-card-active" : "method-card"}
+          aria-pressed={method === "sa"}
+          onClick={() => setMethod("sa")}
+        >
+          <span className="method-card-title">Service account — Headless / team setups</span>
+          <span className="method-card-body">
+            No sign-in, but you grant its email access per property.
+          </span>
         </button>
       </div>
-      {tab === "sa" ? <StepList steps={saSteps} /> : <StepList steps={oauthSteps} />}
+      {method === "oauth" ? (
+        <div>
+          {oauthPanel}
+          <StepList steps={oauthSteps} />
+        </div>
+      ) : (
+        <div>
+          {saPanel}
+          <StepList steps={saSteps} />
+        </div>
+      )}
       <ResultLine result={result} />
     </div>
   );
