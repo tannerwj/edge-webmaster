@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "edge-webmaster",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "7ceb8e60-b239-45bb-9fcd-7e123c97c0f7",
       "migrations_dir": "migrations"
     }
   ],
