@@ -79,7 +79,42 @@ In the wizard: create a token (read = query only; write = also
 (custom connector), Claude Code (`claude mcp add --transport http …`), and
 generic MCP JSON configs.
 
+## Staging
+
+Releases are verified live on staging before they reach production.
+
+- Worker: `edge-webmaster-staging` (the `staging` env in
+  `wrangler.jsonc`), hostname `https://webmaster-staging.tannerwj.dev`.
+- Staging has its **own D1 database** (`edge-webmaster-staging`) — it
+  never touches production data. Create it once, put the returned id in
+  the staging env's `database_id` in `wrangler.jsonc` (replacing the
+  all-zero placeholder), and apply migrations:
+
+  ```bash
+  npx wrangler d1 create edge-webmaster-staging
+  npx wrangler d1 migrations apply edge-webmaster-staging --env staging --remote
+  ```
+
+- Staging needs its own secrets (separate values from production):
+
+  ```bash
+  npx wrangler secret put DEPLOYMENT_SECRET --env staging
+  npx wrangler secret put SETUP_TOKEN --env staging
+  ```
+
+- Deploy with `npm run deploy:staging` (`npm run deploy:prod` targets
+  production; plain `npm run deploy` is the same as prod).
+
+There is deliberately **no Cloudflare Access application on the staging
+hostname**: the `SETUP_TOKEN` login gates setup instead, so staging can
+be exercised end to end — including the setup-token path that Access
+would otherwise hide — before the same build is promoted to production.
+
 ## Updating
 
-Pull `master`, `npm install`, apply any new D1 migrations
-(`npx wrangler d1 migrations apply edge-webmaster --remote`), `npm run deploy`.
+Pull `master`, `npm install`, then ship staging first: apply any new D1
+migrations (`npx wrangler d1 migrations apply edge-webmaster-staging
+--env staging --remote`), `npm run deploy:staging`, and verify the
+release live on the staging hostname. Once staging checks out, apply
+the migrations to production (`npx wrangler d1 migrations apply
+edge-webmaster --remote`) and `npm run deploy:prod`.

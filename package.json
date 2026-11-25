@@ -16,7 +16,9 @@
     "fmt": "abacus fmt",
     "fmt:check": "abacus fmt --check",
     "gates": "abacus check",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "deploy:prod": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261006.0",

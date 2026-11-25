@@ -20,5 +20,24 @@
       "migrations_dir": "migrations"
     }
   ],
-  "worker_loaders": [{ "binding": "LOADER" }]
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "env": {
+    "staging": {
+      "name": "edge-webmaster-staging",
+      "workers_dev": false,
+      "vars": {
+        "MCP_MODE": "code",
+        "PUBLIC_URL": "https://webmaster-staging.tannerwj.dev"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "edge-webmaster-staging",
+          "database_id": "7ba423bc-d453-4b06-a971-eea60a29d794",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "worker_loaders": [{ "binding": "LOADER" }]
+    }
+  }
 }
