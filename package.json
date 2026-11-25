@@ -1,0 +1,44 @@
+{
+  "name": "edge-webmaster",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted code-mode MCP server for webmaster tools (Google Search Console, GA4, Bing Webmaster, PageSpeed/CrUX) on Cloudflare Workers",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "probe": "node tests/e2e/probe.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "abacus check",
+    "lint": "oxlint --type-aware",
+    "fmt": "abacus fmt",
+    "fmt:check": "abacus fmt --check",
+    "gates": "abacus check",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.0",
+    "@tjohnson/abacus": "github:tannerwj/abacus#525c860a88edd7eb6852abc0936ca6fc104bb1b2",
+    "oxlint": "^1.87.0",
+    "typescript": "^5.8.0",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.0.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DEPLOYMENT_SECRET": {
+        "description": "Random 32-byte secret that wraps stored upstream credentials (AES-GCM) in D1. Set with: wrangler secret put DEPLOYMENT_SECRET"
+      },
+      "SETUP_TOKEN": {
+        "description": "Bootstrap/admin token for the setup UI when Cloudflare Access is not in front. Set with: wrangler secret put SETUP_TOKEN"
+      },
+      "DB": {
+        "description": "Settings, agent tokens, audit log, MCP call metrics and the response cache. Migrations run with wrangler d1 migrations apply."
+      },
+      "LOADER": {
+        "description": "Dynamic Worker loader used to sandbox code-mode execute calls."
+      }
+    }
+  }
+}
