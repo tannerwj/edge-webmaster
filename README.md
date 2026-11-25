@@ -6,7 +6,7 @@ Webmaster Tools, and PageSpeed Insights / CrUX — from one Cloudflare Worker
 that runs in **your own** Cloudflare account.
 
 No hosted shim holds your credentials. You deploy it, you connect your own
-Google and Bing accounts in its setup wizard, and your agents (Muse, Claude
+Google and Bing accounts in its dashboard, and your agents (Muse, Claude
 Code, Grok, any MCP client) talk to *your* instance with a token *you* issued.
 
 Part of the Edge family: [Edge IDP](https://github.com/tannerwj/edge-idp) ·
@@ -34,21 +34,37 @@ tool is listed directly.
 1. Click deploy (or `git clone`, `npm install`, `npm run deploy`). Create the
    D1 database and apply migrations as [DEPLOY.md](DEPLOY.md) describes, and
    set the `DEPLOYMENT_SECRET` and `SETUP_TOKEN` secrets.
-2. Open your worker's URL. The setup wizard walks you through:
-   - **Google** — for sites you own, paste a service-account JSON (no consent
-     screen, no token expiry). OAuth also works: create your own Google Cloud
-     OAuth client (the wizard shows the exact redirect URI and steps),
-     connect once, and both Search Console and GA4 light up. See DEPLOY.md
-     for the Internal (Workspace org) vs External (personal account — publish
-     the app, don't stay in Testing) choice.
+2. Open your worker's URL. The **dashboard** (Dashboard, Connections,
+   Agent Tokens, Activity) walks you through connecting each platform — every
+   connector has its own page with numbered, turnkey setup steps and a Test
+   button whose result appears right where you clicked it. Connection status
+   is honest and five-state — *not connected*, *available* (works with no
+   setup), *configured*, *connected*, *error* — and a connector only reads
+   **Connected** after a real health check against the platform passes.
+   - **Google** — two ways in, one connection lights up both Search Console
+     and GA4:
+     - **OAuth sign-in (recommended for your own sites)** — it acts as your
+       Google account, so every property you already have access to works
+       with zero per-property grants. You create your own Google Cloud OAuth
+       client; the setup walks the consent-screen steps (External, then
+       Publish the app — or stay in Testing with yourself as a test user and
+       accept that Google expires refresh tokens after 7 days) and shows the
+       exact redirect URI to paste.
+     - **Service account (headless / team setups)** — no consent screen, no
+       token expiry, but you grant the service account's email access on each
+       property yourself; a Domain property needs just one grant per domain.
    - **Bing** — paste a Webmaster API key.
-   - **PageSpeed/CrUX** — works immediately; an API key is optional.
-3. Mint an **agent token** (read or write scope) in the wizard.
+   - **PageSpeed/CrUX** — works immediately; an API key is optional and only
+     raises quotas.
+3. Mint an **agent token** (read or write scope) on the Agent Tokens page.
 4. Point your MCP client at `https://<your-instance>/mcp` with
-   `Authorization: Bearer ew_…` — snippets for Muse, Claude Code and generic
-   clients are in the wizard.
+   `Authorization: Bearer ew_…`. The **Set up your agent** panel on the Agent
+   Tokens page has per-client copy-paste snippets (Muse, Claude Code, Grok,
+   generic) plus a downloadable agent-ready Markdown file — also served at
+   `GET /setup-agent.md` — that you can hand to an agent so it can configure
+   itself.
 
-Put Cloudflare Access in front of the setup pages for real deployments —
+Put Cloudflare Access in front of the dashboard pages for real deployments —
 [DEPLOY.md](DEPLOY.md) covers the Access + your own IdP (e.g. Edge IDP /
 Johnson ID) wiring and the `/mcp` bypass pattern.
 
@@ -66,6 +82,18 @@ log in D1, AES-GCM-wrapped credential storage, and a feedback endpoint
 (`POST /api/feedback`) so users and agents can report problems to the
 maintainer of a deployment.
 
+## Project structure
+
+```
+src/            Worker: MCP server, admin API, credential store
+  packs/        Connector packs (gsc, ga4, bing, pagespeed)
+web/            React dashboard (Dashboard, Connections, Agent Tokens, Activity)
+scripts/        build-frontend.mjs — builds web/ into src/frontend.gen.ts
+tests/          Vitest suites plus the scripted e2e probe (tests/e2e/probe.mjs)
+migrations/     D1 schema migrations
+DEPLOY.md       Full deploy guide: D1, secrets, Cloudflare Access, staging
+```
+
 ## Develop
 
 ```bash
@@ -76,6 +104,13 @@ npm run dev               # wrangler dev
 npm test                  # unit + mocked-upstream pack tests
 npm run probe             # scripted probes against the dev server (see tests/e2e/probe.mjs)
 npm run check             # abacus gates: lint, abc, tsc, deadcode, secrets, cycles, dupes, todos, ratchet
+```
+
+Verify changes on the staging twin before they reach production:
+
+```bash
+npm run deploy:staging    # staging worker + its own D1, no Access in front
+npm run deploy:prod       # production, once staging checks out
 ```
 
 ## License
