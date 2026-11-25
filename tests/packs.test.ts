@@ -136,4 +136,43 @@ describe("pagespeed pack against a mocked Google upstream", () => {
     expect(out.mobile.lcp).toBe("1.2 s");
     expect(out.desktop.score).toBe(0.91);
   });
+
+  it("health verifies a saved key against a real CrUX queryRecord call", async () => {
+    const db = new FakeD1();
+    const env = makeEnv(db);
+    await putCredential(env, "pagespeed", { api_key: "ps-key-123" });
+    const seen: { url: string; body: string }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
+      seen.push({ url: String(url), body: String(init.body ?? "") });
+      return jsonResponse({ record: { key: { origin: "https://www.google.com" }, metrics: {} } });
+    });
+    const health = await pagespeedPack.health(env);
+    expect(health.ok).toBe(true);
+    expect(health.detail).toBe("Optional API key verified against CrUX");
+    expect(seen[0]?.url).toContain("records:queryRecord");
+    expect(seen[0]?.url).toContain("key=ps-key-123");
+    expect(JSON.parse(seen[0]?.body ?? "{}").origin).toBe("https://www.google.com");
+  });
+
+  it("health without a saved key reaches CrUX but does not claim a key was verified", async () => {
+    const env = makeEnv(new FakeD1());
+    vi.stubGlobal("fetch", async () => jsonResponse({ record: { key: {}, metrics: {} } }));
+    const health = await pagespeedPack.health(env);
+    expect(health.ok).toBe(true);
+    expect(health.detail).not.toContain("key verified");
+    expect(health.detail).toContain("no API key saved");
+  });
+
+  it("health reports a saved key CrUX rejects as not ok", async () => {
+    const db = new FakeD1();
+    const env = makeEnv(db);
+    await putCredential(env, "pagespeed", { api_key: "ps-bad-key" });
+    vi.stubGlobal("fetch", async () =>
+      jsonResponse({ error: { message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }, 400),
+    );
+    const health = await pagespeedPack.health(env);
+    expect(health.ok).toBe(false);
+    expect(health.detail).toContain("400");
+    expect(health.detail).toContain("API key not valid");
+  });
 });

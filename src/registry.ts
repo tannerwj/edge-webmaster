@@ -29,9 +29,14 @@ export interface SetupField {
   help?: string;
 }
 
+export type ConnectionStatus = "not_connected" | "available" | "configured" | "connected" | "error";
+
+export type PackAccess = "Read-only" | "Read + write actions";
+
 export interface PackHealth {
   ok: boolean;
   detail: string;
+  count?: number | null;
 }
 
 export interface ConnectorPack {
@@ -40,11 +45,23 @@ export interface ConnectorPack {
   namespace: string;
   authType: "oauth" | "api-key" | "optional-key";
   blurb: string;
+  provider: string;
+  connectionId: "google" | "bing" | "pagespeed";
+  setupKind: "oauth-or-service-account" | "api-key" | "no-setup-optional-key";
+  authLabel: string;
+  access: PackAccess;
+  examples: string[];
+  recommendation: string;
+  availableWithoutSetup?: boolean;
   setupFields: SetupField[];
+  credentialsPresent: (env: Env) => Promise<boolean>;
   configured: (env: Env) => Promise<boolean>;
   health: (env: Env) => Promise<PackHealth>;
   tools: ToolDef[];
 }
+
+export const isActiveStatus = (status: ConnectionStatus): boolean =>
+  status === "connected" || status === "available";
 
 export const obj = (properties: Record<string, unknown> = {}, required: string[] = []) => ({
   type: "object",
@@ -60,20 +77,75 @@ export const SITE_URL = {
 export interface PackStatus {
   pack: ConnectorPack;
   configured: boolean;
+  credentialsPresent: boolean;
+  status: ConnectionStatus;
+  statusDetail: string;
   health: PackHealth | null;
+  checked: boolean;
+  advertise: boolean;
+  hasAccess: boolean;
 }
 
-export async function packStatuses(env: Env, packs: ConnectorPack[]): Promise<PackStatus[]> {
-  const out: PackStatus[] = [];
-  for (const pack of packs) {
-    const configured = await pack.configured(env).catch(() => false);
-    out.push({ pack, configured, health: null });
+export interface PackStatusOptions {
+  checkHealth?: boolean;
+}
+
+export async function packStatus(
+  env: Env,
+  pack: ConnectorPack,
+  opts: PackStatusOptions = {},
+): Promise<PackStatus> {
+  const credentialsPresent = await pack.credentialsPresent(env).catch(() => false);
+  const available = Boolean(pack.availableWithoutSetup);
+  let status: ConnectionStatus;
+  let statusDetail: string;
+  let health: PackHealth | null = null;
+  let checked = false;
+  if (!credentialsPresent && available) {
+    status = "available";
+    statusDetail = "Available without setup.";
+  } else if (!credentialsPresent) {
+    status = "not_connected";
+    statusDetail = "Not connected yet.";
+  } else if (!opts.checkHealth) {
+    status = "configured";
+    statusDetail = "Credentials saved; not verified yet.";
+  } else {
+    checked = true;
+    try {
+      health = await pack.health(env);
+    } catch (e) {
+      health = { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    }
+    status = health.ok ? "connected" : "error";
+    statusDetail = health.detail;
   }
+  const advertise = available || credentialsPresent;
+  return {
+    pack,
+    configured: credentialsPresent || available,
+    credentialsPresent,
+    status,
+    statusDetail,
+    health,
+    checked,
+    advertise,
+    hasAccess: advertise,
+  };
+}
+
+export async function packStatuses(
+  env: Env,
+  packs: ConnectorPack[],
+  opts: PackStatusOptions = {},
+): Promise<PackStatus[]> {
+  const out: PackStatus[] = [];
+  for (const pack of packs) out.push(await packStatus(env, pack, opts));
   return out;
 }
 
 export function liveTools(statuses: PackStatus[]): ToolDef[] {
-  return statuses.filter((s) => s.configured).flatMap((s) => s.pack.tools);
+  return statuses.filter((s) => s.advertise).flatMap((s) => s.pack.tools);
 }
 
 export function searchTools(tools: ToolDef[], query: string, limit = 20): ToolDef[] {

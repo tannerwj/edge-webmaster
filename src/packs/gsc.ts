@@ -124,12 +124,24 @@ export const gscPack: ConnectorPack = {
   namespace: "gsc",
   authType: "oauth",
   blurb: "Search performance, sitemaps and URL inspection for your Google properties.",
+  provider: "Google",
+  connectionId: "google",
+  setupKind: "oauth-or-service-account",
+  authLabel: "OAuth or service account",
+  access: "Read + write actions",
+  examples: [
+    "See clicks, impressions and average position for a page or query",
+    "Inspect whether a URL is indexed and which canonical Google chose",
+    "List and submit sitemaps for a property",
+  ],
+  recommendation: "Start here — this is the core one",
   setupFields: [],
+  credentialsPresent: googleConfigured,
   configured: googleConfigured,
   health: async (env) => {
     const data = await googleFetch(env, `${API}/sites`);
     const count = Array.isArray(data.siteEntry) ? data.siteEntry.length : 0;
-    return { ok: true, detail: `${count} properties visible` };
+    return { ok: true, detail: `${count} properties visible`, count };
   },
   tools: [
     {

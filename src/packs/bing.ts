@@ -44,6 +44,17 @@ export const bingPack: ConnectorPack = {
   namespace: "bing",
   authType: "api-key",
   blurb: "Bing search traffic, crawl issues and site stats with a single API key.",
+  provider: "Bing",
+  connectionId: "bing",
+  setupKind: "api-key",
+  authLabel: "API key",
+  access: "Read-only",
+  examples: [
+    "See top Bing queries and pages for a site",
+    "Check crawl issues Bingbot found on a site",
+    "Track Bing rank and traffic over time",
+  ],
+  recommendation: "Same idea as Search Console, for Bing",
   setupFields: [
     {
       key: "api_key",
@@ -52,11 +63,12 @@ export const bingPack: ConnectorPack = {
       help: "Bing Webmaster Tools → Settings → API Access → Generate API Key.",
     },
   ],
+  credentialsPresent: async (env) => Boolean((await getCredential<BingCred>(env, "bing"))?.api_key),
   configured: async (env) => Boolean((await getCredential<BingCred>(env, "bing"))?.api_key),
   health: async (env) => {
     const sites = await bingCall(env, "GetUserSites");
     const count = Array.isArray(sites) ? sites.length : 0;
-    return { ok: true, detail: `${count} verified sites` };
+    return { ok: true, detail: `${count} verified sites`, count };
   },
   tools: [
     {

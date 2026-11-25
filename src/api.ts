@@ -1,7 +1,7 @@
 import { deleteCredential, putCredential } from "./creds";
 import { googleAuthUrl, googleRedirectUri } from "./google";
 import { PACKS } from "./packs";
-import { packStatuses, type Env } from "./registry";
+import { isActiveStatus, packStatus, packStatuses, type ConnectionStatus, type Env, type PackStatus } from "./registry";
 import { audit, createAgentToken, listAgentTokens, revokeAgentToken } from "./store";
 import { nowSec, OpError, randomToken, sha256Hex, str, timingSafeEqual } from "./util";
 
@@ -30,18 +30,105 @@ async function requireAdmin(req: Request, env: Env): Promise<Response | null> {
   return json({ error: "Setup access required. Sign in through Cloudflare Access or enter the setup token." }, 401);
 }
 
+interface NextStep {
+  id: string;
+  title: string;
+  body: string;
+  action_target: string;
+}
+
+function nextStep(statuses: PackStatus[], activeTokens: number): NextStep | null {
+  const byId = new Map(statuses.map((s) => [s.pack.id, s.status]));
+  const step = (id: string, title: string, body: string, action_target: string): NextStep => ({
+    id,
+    title,
+    body,
+    action_target,
+  });
+  if (!isActiveStatus(byId.get("google-search-console") ?? "not_connected"))
+    return step("connect_gsc", "Connect Google Search Console", "Connect Google to unlock search performance, sitemaps and URL inspection.", "google-search-console");
+  if (!activeTokens)
+    return step("mint_token", "Mint an agent token", "Create a token so your AI agent can call the connected tools over MCP.", "tokens");
+  if (!isActiveStatus(byId.get("google-analytics") ?? "not_connected"))
+    return step("connect_ga4", "Connect Google Analytics 4", "GA4 shares the Google connection and adds traffic and conversion reporting.", "google-analytics");
+  if (!isActiveStatus(byId.get("bing-webmaster") ?? "not_connected"))
+    return step("connect_bing", "Connect Bing Webmaster Tools", "Add the Bing API key to cover Bing, Copilot and DuckDuckGo search data.", "bing-webmaster");
+  return null;
+}
+
+async function dashboardSummary(env: Env, statuses: PackStatus[]) {
+  const since = nowSec() - 7 * 86_400;
+  let activeTokens = 0;
+  let toolCalls = 0;
+  let latestAudit: unknown = null;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM agent_tokens WHERE expires_at IS NULL OR expires_at > ?1",
+    ).bind(nowSec()).first<{ n: number }>();
+    activeTokens = Number(row?.n ?? 0);
+  } catch { activeTokens = 0; }
+  try {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM mcp_calls WHERE started_at > ?1",
+    ).bind(since).first<{ n: number }>();
+    toolCalls = Number(row?.n ?? 0);
+  } catch { toolCalls = 0; }
+  try {
+    const res = await env.DB.prepare(
+      "SELECT ts, actor, action, detail FROM audit_log ORDER BY id DESC LIMIT 1",
+    ).all<Record<string, unknown>>();
+    latestAudit = res.results?.[0] ?? null;
+  } catch { latestAudit = null; }
+  const byConnector: Record<string, number | null> = {};
+  let discovered = 0;
+  let known = false;
+  for (const s of statuses) {
+    const count = s.status === "connected" ? (s.health?.count ?? null) : null;
+    byConnector[s.pack.id] = count;
+    if (count !== null) { discovered += count; known = true; }
+  }
+  return {
+    connections_active: statuses.filter((s) => isActiveStatus(s.status)).length,
+    connections_total: statuses.length,
+    properties_discovered: known ? discovered : null,
+    properties_by_connector: byConnector,
+    active_agent_tokens: activeTokens,
+    tool_calls_last_7d: toolCalls,
+    latest_audit: latestAudit,
+    recommended_next_step: nextStep(statuses, activeTokens),
+  };
+}
+
 async function statusBody(env: Env) {
-  const statuses = await packStatuses(env, PACKS);
+  const statuses = await packStatuses(env, PACKS, { checkHealth: true });
+  const summary = await dashboardSummary(env, statuses);
   return {
     mode: env.MCP_MODE ?? "code",
     bootstrap_open: !env.SETUP_TOKEN,
+    summary,
+    dashboard: summary,
     connectors: statuses.map((s) => ({
       id: s.pack.id,
       name: s.pack.name,
       namespace: s.pack.namespace,
       auth_type: s.pack.authType,
+      auth_label: s.pack.authLabel,
+      provider: s.pack.provider,
+      connection_id: s.pack.connectionId,
+      setup_kind: s.pack.setupKind,
+      access: s.pack.access,
+      description: s.pack.blurb,
       blurb: s.pack.blurb,
+      examples: s.pack.examples,
+      recommendation: s.pack.recommendation,
+      status: s.status,
+      status_detail: s.statusDetail,
+      credentials_present: s.credentialsPresent,
       configured: s.configured,
+      advertise: s.advertise,
+      has_access: s.hasAccess,
+      health: s.health,
+      checked: s.checked,
       setup_fields: s.pack.setupFields,
       tools: s.pack.tools.map((t) => t.name),
     })),
@@ -51,12 +138,16 @@ async function statusBody(env: Env) {
 async function testConnector(env: Env, id: string): Promise<Response> {
   const pack = PACKS.find((p) => p.id === id);
   if (!pack) return json({ error: "Unknown connector." }, 404);
-  if (!(await pack.configured(env))) return json({ ok: false, detail: "Not configured yet." });
+  const base = await packStatus(env, pack);
+  if (base.status === "not_connected")
+    return json({ ok: false, detail: "Not configured yet.", status: base.status as ConnectionStatus });
   try {
     const health = await pack.health(env);
-    return json(health);
+    const status: ConnectionStatus = !health.ok ? "error" : base.credentialsPresent ? "connected" : "available";
+    return json({ ...health, status, status_detail: health.detail, health });
   } catch (e) {
-    return json({ ok: false, detail: e instanceof Error ? e.message : String(e) });
+    const detail = e instanceof Error ? e.message : String(e);
+    return json({ ok: false, detail, status: "error" as ConnectionStatus, status_detail: detail });
   }
 }
 
@@ -134,7 +225,7 @@ async function login(req: Request, env: Env): Promise<Response> {
 }
 
 async function routeAdmin(req: Request, env: Env, ctx: ExecutionContext, path: string, url: URL): Promise<Response> {
-  if (path === "/api/status" && req.method === "GET") return json(await statusBody(env));
+  if ((path === "/api/status" || path === "/api/dashboard") && req.method === "GET") return json(await statusBody(env));
   if (path === "/api/google/oauth-url" && req.method === "GET") return oauthUrl(env, url);
   if (path === "/api/metrics" && req.method === "GET") return json(await metrics(env));
   const connector = await routeConnectors(req, env, ctx, path);

@@ -40,6 +40,25 @@ async function runOnce(env: Parameters<typeof getCredential>[0], url: string, st
   };
 }
 
+async function cruxFetch(
+  env: Parameters<typeof getCredential>[0],
+  method: string,
+  body: Record<string, unknown>,
+): Promise<{ status: number; ok: boolean; data: Record<string, unknown> }> {
+  const res = await fetch(`https://chromeuxreport.googleapis.com/v1/records:${method}?${(await keyParam(env)).slice(1)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return { status: res.status, ok: res.ok, data };
+}
+
+function cruxError(data: Record<string, unknown>): { message: string; status: string } {
+  const err = isRecord(data.error) ? data.error : {};
+  return { message: str(err.message), status: str(err.status) };
+}
+
 async function crux(env: Parameters<typeof getCredential>[0], method: string, args: Record<string, unknown>) {
   const body: Record<string, unknown> = { url: str(args.url) || undefined, origin: str(args.origin) || undefined };
   if (!body.url && !body.origin) throw new OpError("url or origin is required.");
@@ -47,17 +66,43 @@ async function crux(env: Parameters<typeof getCredential>[0], method: string, ar
     body.collectionPeriodCount = 12;
     body.metrics = ["largest_contentful_paint", "cumulative_layout_shift", "interaction_to_next_paint"];
   }
-  const res = await fetch(`https://chromeuxreport.googleapis.com/v1/records:${method}?${(await keyParam(env)).slice(1)}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = data.error as { message?: string } | undefined;
-    throw new OpError(`CrUX ${res.status}: ${err?.message ?? "request failed (a key may be required)"}`);
+  const { status, ok, data } = await cruxFetch(env, method, body);
+  if (!ok) {
+    throw new OpError(`CrUX ${status}: ${cruxError(data).message || "request failed (a key may be required)"}`);
   }
   return data.record ?? data;
+}
+
+// Probe origin for the health check: google.com's own origin has near-certain
+// CrUX coverage (it is among the highest-traffic origins on the web), so a
+// missing record there would mean an API problem, not a data gap.
+const CRUX_PROBE_ORIGIN = "https://www.google.com";
+
+async function pagespeedHealth(env: Parameters<typeof getCredential>[0]) {
+  const cred = await getCredential<PsCred>(env as never, "pagespeed");
+  const hasKey = Boolean(cred?.api_key);
+  const { status, ok, data } = await cruxFetch(env, "queryRecord", { origin: CRUX_PROBE_ORIGIN });
+  // CrUX answers a query for an origin with no field data as 404 NOT_FOUND.
+  // Reaching that answer still proves the request was authenticated and the
+  // API is enabled, so it counts as the key being accepted.
+  const notFound = status === 404 || cruxError(data).status === "NOT_FOUND";
+  if (ok || notFound) {
+    return {
+      ok: true,
+      detail: hasKey
+        ? "Optional API key verified against CrUX"
+        : "Public CrUX API reachable; no API key saved to verify.",
+      count: null,
+    };
+  }
+  const message = cruxError(data).message || "request failed";
+  return {
+    ok: false,
+    detail: hasKey
+      ? `Optional API key not verified: CrUX ${status}: ${message}`
+      : `No API key saved; public CrUX check failed: CrUX ${status}: ${message}`,
+    count: null,
+  };
 }
 
 export const pagespeedPack: ConnectorPack = {
@@ -66,11 +111,26 @@ export const pagespeedPack: ConnectorPack = {
   namespace: "pagespeed",
   authType: "optional-key",
   blurb: "Lab performance scores and real-user field data. Works without a key; a key raises quotas.",
+  provider: "Google",
+  connectionId: "pagespeed",
+  setupKind: "no-setup-optional-key",
+  authLabel: "No setup — optional API key",
+  access: "Read-only",
+  examples: [
+    "Run a PageSpeed score with LCP, CLS and INP for any URL",
+    "See real-user CrUX field data for a URL or origin",
+    "Compare CrUX history over 12 collection periods",
+  ],
+  recommendation: "No setup — already available",
+  availableWithoutSetup: true,
   setupFields: [
     { key: "api_key", label: "Google API key (optional)", type: "password", help: "Any Google Cloud API key with PageSpeed Insights + Chrome UX Report APIs enabled." },
   ],
-  configured: async () => true,
-  health: async () => ({ ok: true, detail: "Public API reachable; per-URL checks run on demand." }),
+  credentialsPresent: async (env) =>
+    Boolean((await getCredential<PsCred>(env, "pagespeed"))?.api_key),
+  configured: async (env) =>
+    Boolean((await getCredential<PsCred>(env, "pagespeed"))?.api_key),
+  health: pagespeedHealth,
   tools: [
     {
       name: "pagespeed_run",

@@ -38,12 +38,29 @@ export const ga4Pack: ConnectorPack = {
   namespace: "ga4",
   authType: "oauth",
   blurb: "GA4 reporting over the same Google connection as Search Console.",
+  provider: "Google",
+  connectionId: "google",
+  setupKind: "oauth-or-service-account",
+  authLabel: "OAuth or service account",
+  access: "Read-only",
+  examples: [
+    "Report sessions, users and conversions for a GA4 property",
+    "Compare traffic between two periods",
+    "Check realtime activity for a property",
+  ],
+  recommendation: "Pairs with Search Console",
   setupFields: [],
+  credentialsPresent: googleConfigured,
   configured: googleConfigured,
   health: async (env) => {
     const data = await googleFetch(env, `${ADMIN}/accountSummaries`);
-    const count = Array.isArray(data.accountSummaries) ? data.accountSummaries.length : 0;
-    return { ok: true, detail: `${count} accounts visible` };
+    const accounts = Array.isArray(data.accountSummaries) ? data.accountSummaries : [];
+    let count = 0;
+    for (const acct of accounts) {
+      const props = (acct as { propertySummaries?: unknown }).propertySummaries;
+      count += Array.isArray(props) ? props.length : 0;
+    }
+    return { ok: true, detail: `${count} properties visible`, count };
   },
   tools: [
     {
